@@ -42,6 +42,26 @@ async function main() {
         process.env.SEED_ADMIN_PASSWORD ? 'SEED_ADMIN_PASSWORD' : 'default admin123'
       })`,
     );
+
+    // 行情总览页的指数清单（与 orioles-service 的 Stock 表一致）
+    const indices = [
+      { code: '000001', source: 'SS' }, // 上证指数
+      { code: '399001', source: 'SZ' }, // 深证成指
+      { code: '399006', source: 'SZ' }, // 创业板指
+      { code: '000688', source: 'SS' }, // 科创50
+      { code: '399330', source: 'SZ' }, // 深证100
+      { code: '000300', source: 'SS' }, // 沪深300
+      { code: '000905', source: 'SS' }, // 中证500
+      { code: '000852', source: 'SS' }, // 中证1000
+    ] as const;
+    for (const idx of indices) {
+      await prisma.stock.upsert({
+        where: { code: idx.code },
+        update: {},
+        create: { code: idx.code, source: idx.source, type: 'ZS' },
+      });
+    }
+    console.log(`stock: ${indices.length} indices upserted`);
     console.log('seed done.');
   } finally {
     await prisma.$disconnect();
