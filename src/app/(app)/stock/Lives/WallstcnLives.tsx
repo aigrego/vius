@@ -119,7 +119,7 @@ export default function WallstcnLives({ refreshInterval = 60000 }) {
 
     useEffect(() => {
         if (lives.length > 0) {
-            let tmp: TLivesMap = {}
+            const tmp: TLivesMap = {}
             lives.forEach((item, index) => {
                 const date = new Date(item.display_time * 1000).toLocaleDateString('zh-CN')
                 if (date in tmp) {

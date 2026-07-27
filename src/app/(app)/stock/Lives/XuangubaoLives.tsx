@@ -19,7 +19,7 @@ function StocksTag({ stocks }: { stocks: TStockInfo[] }) {
     const render = (stock: Array<string | number>) => {
         const stockObj = Object.fromEntries(fields.map((_, i) => [fields[i], stock[i]]))
         const change = stockObj['px_change'] as number
-        let state = {
+        const state = {
             icon: change > 0 ? '▲' : change === 0 ? '' : '▼',
             rate: StockFormat.rate(stockObj['px_change_rate'] as number / 100),
             style: change > 0 ? 'text-red-600 border-red-600' : change === 0 ? 'text-gray-600 border-gray-600' : 'text-green-600 border-green-600',
@@ -112,7 +112,7 @@ export default function XuangubaoLives({ refreshInterval = 60000 }) {
 
     useEffect(() => {
         if (lives.length > 0) {
-            let tmp: TLivesMap = {}
+            const tmp: TLivesMap = {}
             lives.forEach((item, index) => {
                 const date = new Date(item.manual_updated_at * 1000).toLocaleDateString('zh-CN');
                 if (date in tmp) {
