@@ -13,20 +13,10 @@ const STOCKS_API = '/api/stocks';
 
 export default function Indices({ refreshInterval = 5000 }) {
 
-    const fields = [
-        'prod_code',
-        'prod_name',
-        'price_precision',
-        'update_time',
-        'last_px',
-        'px_change',
-        'px_change_rate',
-        'trade_status'
-    ]
-
-    const { data: stocks = [], error, isLoading: staockLoading } = useSWR<TStock[]>(STOCKS_API, http.find_);
+    const { data: stocks = [] } = useSWR<TStock[]>(STOCKS_API, http.find_);
+    // 指数实时快照走服务端 /api/stocks/real（wallstcn api-ddc 已下线，改为三源降级代理）
     const { isLoading, data: realResp } = useSWR<TRealData>(
-        staockLoading ? null : [`https://api-ddc.wallstcn.com/market/real?prod_code=${stocks.map(stock => `${stock.code}.${stock.source}`).join(',')}&fields=${fields.join(',')}`, stocks],
+        '/api/stocks/real',
         http.getAll,
         { refreshInterval }
     );

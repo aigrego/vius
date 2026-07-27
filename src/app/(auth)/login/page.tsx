@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { LogoMark } from '@/components/Logo';
 
 const ERROR_MESSAGES: Record<string, string> = {
   feishu: '飞书登录失败，请重试',
@@ -153,9 +154,7 @@ export default function LoginPage() {
           }}
         />
         <div className="relative flex items-center gap-2.5 text-white">
-          <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-white/15 text-[15px] font-bold">
-            微
-          </span>
+          <LogoMark size={36} variant="white" />
           <span className="text-[15px] font-semibold tracking-tight">观微 vius</span>
         </div>
 

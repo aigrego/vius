@@ -8,8 +8,9 @@ import NumberFlow from '@number-flow/react'
 import { NumberFlowFormat } from "@/utils/format"
 
 export default function QQPlates() {
+    // 腾讯板块排行无 CORS 头，改走服务端代理 /api/stocks/plates-qq
     const { data = { data: { rank_list: [] } } } = useSWR(
-        'https://proxy.finance.qq.com/cgi/cgi-bin/rank/pt/getRank?board_type=hy&sort_type=priceRatio&direct=down&offset=0&count=40',
+        '/api/stocks/plates-qq',
         http.getAll,
         {
             refreshInterval: 10000

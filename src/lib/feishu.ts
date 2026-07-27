@@ -5,7 +5,7 @@ interface FeishuResult {
   message?: string;
 }
 
-export async function pushAlertsToFeishu(alerts: Alert[]): Promise<FeishuResult> {
+export async function pushAlertsToFeishu(alerts: Alert[], owner?: string): Promise<FeishuResult> {
   const webhookUrl = process.env.FEISHU_WEBHOOK_URL;
   
   if (!webhookUrl) {
@@ -29,7 +29,8 @@ export async function pushAlertsToFeishu(alerts: Alert[]): Promise<FeishuResult>
       content: {
         post: {
           zh_cn: {
-            title: `🚨 股票预警提醒 (${alerts.length}条)`,
+            // 股票池按账号隔离，标题标注归属用户
+            title: `🚨 股票预警提醒${owner ? ` · ${owner}` : ''} (${alerts.length}条)`,
             content: [
               alertTexts.map(text => ({
                 tag: 'text',

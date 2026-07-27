@@ -3,10 +3,11 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, LayoutGrid, LineChart, ListChecks } from 'lucide-react';
+import { Activity, KeyRound, LayoutGrid, LineChart, ListChecks, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* 左侧 244px 导航栏：行情总览 / 股票池 / A股总览 / 放量信号，
+   底部固定「Agent 接入 / 设置」入口。
    用 usePathname 高亮当前项（选中态为品牌色淡底 + 品牌色文字）。 */
 
 interface NavEntry {
@@ -44,6 +45,21 @@ const NAV_ITEMS: NavEntry[] = [
   },
 ];
 
+const BOTTOM_ITEMS: NavEntry[] = [
+  {
+    icon: <KeyRound size={16} />,
+    label: 'Agent 接入',
+    href: '/agent',
+    match: (p) => p === '/agent',
+  },
+  {
+    icon: <Settings size={16} />,
+    label: '设置',
+    href: '/settings',
+    match: (p) => p === '/settings',
+  },
+];
+
 function NavItem({ entry, active }: { entry: NavEntry; active: boolean }) {
   return (
     <Link
@@ -72,6 +88,12 @@ export function Sidebar() {
           ))}
         </div>
       </nav>
+      {/* 底部固定入口：Agent 接入 / 设置 */}
+      <div className="flex flex-none flex-col gap-px border-t border-border px-3 py-2">
+        {BOTTOM_ITEMS.map((item) => (
+          <NavItem key={item.href} entry={item} active={item.match(pathname)} />
+        ))}
+      </div>
     </aside>
   );
 }

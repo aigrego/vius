@@ -78,7 +78,8 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-mono font-bold text-yellow-400">
-                ¥{stock.cost?.toFixed(3) || '-'}
+                {/* cost 是 Prisma Decimal，序列化后为字符串，先转 Number */}
+                ¥{stock.cost ? Number(stock.cost).toFixed(3) : '-'}
               </div>
             </CardContent>
           </Card>

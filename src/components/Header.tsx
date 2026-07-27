@@ -3,15 +3,17 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, LogOut, Moon, Sun } from 'lucide-react';
+import { ChevronDown, LogOut, Settings, Sun } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Logo } from '@/components/Logo';
 import { applyTheme } from '@/lib/theme';
 
 export const HEADER_HEIGHT = 52;
@@ -21,6 +23,8 @@ interface SessionUser {
   name?: string | null;
   username?: string | null;
   email?: string | null;
+  role?: string | null;
+  avatarUrl?: string | null;
 }
 
 async function fetchSessionUser(): Promise<SessionUser | null> {
@@ -39,33 +43,43 @@ function displayName(user: SessionUser | null): string {
   return user.name || user.username || user.email || '用户';
 }
 
-/* 明暗主题切换按钮：初始值读 anti-flash 脚本已写入的 data-theme。 */
-function ThemeToggle() {
-  const [light, setLight] = React.useState(
-    () => typeof document !== 'undefined' && document.documentElement.dataset.theme !== 'dark',
-  );
-
-  const toggle = () => {
-    const next = !light;
-    applyTheme(next ? 'light' : 'dark');
-    setLight(next);
-  };
-
+/* 头像：有 avatarUrl 用图片，否则用户名首字符色块。 */
+function Avatar({ user, size }: { user: SessionUser | null; size: number }) {
+  const name = displayName(user);
+  if (user?.avatarUrl) {
+    return (
+      // 第三方头像外链，不走 next/image 域名白名单
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={user.avatarUrl}
+        alt={name}
+        className="flex-none rounded-full object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      title={light ? '切换到深色模式' : '切换到浅色模式'}
-      className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-2 transition-colors hover:bg-surface-2"
+    <span
+      className="grid flex-none place-items-center rounded-full text-white"
+      style={{ width: size, height: size, background: 'var(--brand-blue)', fontSize: size * 0.42 }}
     >
-      {light ? <Moon size={16} /> : <Sun size={16} />}
-    </button>
+      {name.slice(0, 1).toUpperCase()}
+    </span>
   );
 }
 
 function UserMenu({ user }: { user: SessionUser | null }) {
   const router = useRouter();
   const name = displayName(user);
+  // 浅色模式开关：初始值读 anti-flash 脚本已写入的 data-theme
+  const [light, setLight] = React.useState(
+    () => typeof document !== 'undefined' && document.documentElement.dataset.theme !== 'dark',
+  );
+
+  const toggleTheme = (next: boolean) => {
+    applyTheme(next ? 'light' : 'dark');
+    setLight(next);
+  };
 
   const logout = async () => {
     try {
@@ -80,22 +94,34 @@ function UserMenu({ user }: { user: SessionUser | null }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="flex h-8 items-center gap-2 rounded-lg px-1.5 hover:bg-surface-2">
-          {/* 用户名首字符头像块 */}
-          <span
-            className="grid h-6 w-6 flex-none place-items-center rounded-[6px] text-[12px] font-semibold text-white"
-            style={{ background: 'var(--brand-blue)' }}
-          >
-            {name.slice(0, 1).toUpperCase()}
-          </span>
+          <Avatar user={user} size={24} />
           <span className="max-w-[120px] truncate text-[13px] font-medium text-fg-1">{name}</span>
           <ChevronDown size={14} className="flex-none text-fg-3" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent style={{ width: 208 }}>
-        <DropdownMenuLabel>
-          <div className="truncate text-[13px] font-semibold text-fg-1">{name}</div>
-          {user?.email && <div className="truncate text-[11.5px] text-fg-3">{user.email}</div>}
-        </DropdownMenuLabel>
+      <DropdownMenuContent style={{ width: 240 }}>
+        {/* 用户卡片：大头像 + 名字 + @username + 角色 */}
+        <div className="flex flex-col items-center gap-1 px-3 pb-2.5 pt-3">
+          <Avatar user={user} size={48} />
+          <div className="mt-1 max-w-full truncate text-[14px] font-semibold text-fg-1">{name}</div>
+          {user?.username && (
+            <div className="max-w-full truncate text-[12px] text-fg-3">@{user.username}</div>
+          )}
+          <Badge tone="blue" className="mt-1">
+            {user?.role === 'admin' ? '公司管理员' : '成员'}
+          </Badge>
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => router.push('/profile')}>
+          <Settings size={15} className="flex-none text-fg-3" />
+          个人设置
+        </DropdownMenuItem>
+        {/* 浅色模式开关：用普通行避免点击后菜单自动收起 */}
+        <div className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] text-fg-1">
+          <Sun size={15} className="flex-none text-fg-3" />
+          <span className="flex-1">浅色模式</span>
+          <Switch checked={light} onCheckedChange={toggleTheme} />
+        </div>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={logout} className="text-danger">
           <LogOut size={15} className="flex-none" />
@@ -106,7 +132,7 @@ function UserMenu({ user }: { user: SessionUser | null }) {
   );
 }
 
-/* 全局 52px 顶栏：左侧「观微 vius」logo，右侧主题切换 + 用户菜单。 */
+/* 全局 52px 顶栏：左侧 logo，右侧用户菜单（主题开关在菜单内）。 */
 export function Header() {
   const [user, setUser] = React.useState<SessionUser | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -125,20 +151,18 @@ export function Header() {
 
   return (
     <header
-      className="relative z-30 flex flex-none items-center gap-3 border-b border-border bg-surface px-4"
+      className="relative z-[60] flex flex-none items-center gap-3 border-b border-border bg-surface px-4"
       style={{ height: HEADER_HEIGHT }}
     >
-      {/* 左：logo 文字 */}
+      {/* 左：logo */}
       <div className="flex min-w-0 flex-1 items-center">
-        <Link href="/stock" className="flex flex-none items-baseline gap-1.5 whitespace-nowrap">
-          <span className="text-[15px] font-bold tracking-tight text-fg-1">观微</span>
-          <span className="font-mono text-[15px] font-semibold tracking-tight text-fg-3">vius</span>
+        <Link href="/stock" className="flex flex-none items-center">
+          <Logo size={24} />
         </Link>
       </div>
 
-      {/* 右：主题切换 + 用户菜单 */}
+      {/* 右：用户菜单 */}
       <div className="flex min-w-0 flex-none items-center gap-1.5">
-        <ThemeToggle />
         {loading ? <div className="skeleton h-8 w-[96px] rounded-lg" /> : <UserMenu user={user} />}
       </div>
     </header>

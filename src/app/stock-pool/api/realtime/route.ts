@@ -1,16 +1,31 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireUser, UnauthorizedError } from '@/lib/session';
 import { fetchRealtimeQuotes, RealtimeQuote } from '@/lib/realtime';
 
 // 简单内存 TTL 缓存：防止多客户端高频轮询打爆外部行情源
 const CACHE_TTL_MS = 3000;
 const quoteCache = new Map<string, { expires: number; payload: any }>();
 
-// GET /api/realtime - 获取实时股价
+// GET /api/realtime - 获取当前用户股票池的实时股价（按账号隔离）
 export async function GET() {
   try {
-    // 获取所有股票代码
+    let session;
+    try {
+      session = await requireUser();
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        return NextResponse.json(
+          { success: false, error: '未登录' },
+          { status: 401 }
+        );
+      }
+      throw e;
+    }
+
+    // 获取当前用户的股票代码
     const stocks = await prisma.watchlist.findMany({
+      where: { userId: session.uid },
       select: { code: true, market: true, cost: true }
     });
 
@@ -18,8 +33,8 @@ export async function GET() {
       return NextResponse.json({ success: true, data: {} });
     }
 
-    // 同一批 codes 在 TTL 内直接返回缓存
-    const cacheKey = stocks.map(s => s.code).sort().join(',');
+    // 同一用户同一批 codes 在 TTL 内直接返回缓存
+    const cacheKey = `${session.uid}:${stocks.map(s => s.code).sort().join(',')}`;
     const cached = quoteCache.get(cacheKey);
     if (cached && cached.expires > Date.now()) {
       return NextResponse.json(cached.payload);

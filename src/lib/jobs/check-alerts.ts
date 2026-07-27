@@ -12,6 +12,8 @@ const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 export interface AlertCheckOptions {
   force?: boolean; // 跳过冷却去重
   noFeishu?: boolean; // 不推送飞书
+  userId?: string; // 只检查该用户的股票池（股票池已按账号隔离）
+  username?: string; // 飞书推送标题里标注归属用户
 }
 
 export interface AlertCheckResult {
@@ -52,10 +54,10 @@ export function normalizeAlertsJson(raw: Record<string, unknown>): AlertConfig['
 }
 
 export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<AlertCheckResult> {
-  const { force = false, noFeishu = false } = options;
+  const { force = false, noFeishu = false, userId, username } = options;
 
-  // 获取所有股票
-  const stocks = await prisma.watchlist.findMany();
+  // 获取股票（传 userId 时只查该用户的池子）
+  const stocks = await prisma.watchlist.findMany(userId ? { where: { userId } } : undefined);
 
   // 获取实时行情
   const codes = stocks.map(s => s.code);
@@ -108,7 +110,7 @@ export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<Al
   if (!force && triggeredAlerts.length > 0) {
     const cooldownSince = new Date(Date.now() - ALERT_COOLDOWN_MS);
     const recentAlerts = await prisma.alertHistory.findMany({
-      where: { createdAt: { gte: cooldownSince } },
+      where: { createdAt: { gte: cooldownSince }, ...(userId ? { userId } : {}) },
       select: { code: true, alertType: true }
     });
     const recentKeys = new Set(recentAlerts.map(a => `${a.code}:${a.alertType}`));
@@ -116,10 +118,11 @@ export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<Al
     skippedCount = triggeredAlerts.length - alertsToSave.length;
   }
 
-  // 批量写入数据库
+  // 批量写入数据库（带归属用户）
   if (alertsToSave.length > 0) {
     await prisma.alertHistory.createMany({
       data: alertsToSave.map(alert => ({
+        userId: userId ?? null,
         code: alert.code,
         alertType: alert.type,
         severity: alert.severity,
@@ -133,7 +136,7 @@ export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<Al
   // 推送飞书（在写库之后，推送失败不影响已写入的告警记录）
   let feishuSent = false;
   if (!noFeishu && alertsToSave.length > 0) {
-    const feishuResult = await pushAlertsToFeishu(alertsToSave);
+    const feishuResult = await pushAlertsToFeishu(alertsToSave, username);
     feishuSent = feishuResult.sent;
   }
 
@@ -145,4 +148,28 @@ export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<Al
     alerts: triggeredAlerts,
     feishuSent
   };
+}
+
+/* 定时任务入口：按用户分组逐池检查（股票池已按账号隔离），
+   每个用户的告警单独落库、单独推飞书（标题带用户名）。 */
+export async function runAlertCheckAll(options: Omit<AlertCheckOptions, 'userId' | 'username'> = {}) {
+  const owners = await prisma.watchlist.findMany({
+    select: { userId: true, user: { select: { username: true, name: true } } },
+    distinct: ['userId']
+  });
+
+  const total = { checked: 0, triggered: 0, saved: 0, skipped: 0, feishuSent: false };
+  for (const owner of owners) {
+    const r = await runAlertCheck({
+      ...options,
+      userId: owner.userId,
+      username: owner.user.name || owner.user.username
+    });
+    total.checked += r.checked;
+    total.triggered += r.triggered;
+    total.saved += r.saved;
+    total.skipped += r.skipped;
+    total.feishuSent = total.feishuSent || r.feishuSent;
+  }
+  return total;
 }

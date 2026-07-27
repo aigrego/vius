@@ -7,16 +7,29 @@ const VALID_MARKETS = ['sh', 'sz', 'bj', 'hk', 'us'];
 // 股票代码格式（会被拼进外部行情 URL，必须严格校验）
 const CODE_PATTERN = /^[0-9A-Za-z.]{1,12}$/;
 
-// GET /api/stocks/[code] - 获取单个股票
+// GET /api/stocks/[code] - 获取当前用户的单个股票
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ code: string }> }
 ) {
   try {
+    let session;
+    try {
+      session = await requireUser();
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        return NextResponse.json(
+          { success: false, error: '未登录' },
+          { status: 401 }
+        );
+      }
+      throw e;
+    }
+
     const { code } = await params;
 
     const stock = await prisma.watchlist.findUnique({
-      where: { code }
+      where: { userId_code: { userId: session.uid, code } }
     });
 
     if (!stock) {
@@ -81,10 +94,10 @@ export async function PUT(
       );
     }
 
-    // 写操作与审计日志包在同一事务中
+    // 写操作与审计日志包在同一事务中（按用户隔离，只能改自己的股票）
     const [stock] = await prisma.$transaction([
       prisma.watchlist.update({
-        where: { code },
+        where: { userId_code: { userId: session.uid, code } },
         data: {
           ...(name && { name }),
           ...(market && { market }),
@@ -154,10 +167,10 @@ export async function DELETE(
       );
     }
 
-    // 写操作与审计日志包在同一事务中
+    // 写操作与审计日志包在同一事务中（按用户隔离，只能删自己的股票）
     await prisma.$transaction([
       prisma.watchlist.delete({
-        where: { code }
+        where: { userId_code: { userId: session.uid, code } }
       }),
       prisma.auditLog.create({
         data: {

@@ -5,6 +5,8 @@ import useSWR from "swr";
 import { Loading } from "@/components/Icons";
 import http from "@/utils/http";
 import { TRealData } from "../type";
+import { StockChips } from "@/components/stock-pool/stock-chips";
+import { StockNews } from "@/components/stock-pool/stock-news";
 
 const StockMetric = ({ name, value, valueStyle = '' }: { name: string, value: string, valueStyle?: string }) => {
     return (
@@ -45,7 +47,7 @@ export default function Stock({ code }: { code: string }) {
         "delisting_date"
     ]
 
-    const { data: realResp } = useSWR<TRealData>(`https://api-ddc.wallstcn.com/market/real?prod_code=${code}&fields=${fields.join(',')}`, http.getAll, { refreshInterval: 15000, revalidateOnFocus: false })
+    const { data: realResp } = useSWR<TRealData>(`/api/stocks/real?prod_code=${code}&fields=${fields.join(',')}`, http.getAll, { refreshInterval: 15000, revalidateOnFocus: false })
 
     if (!realResp) {
         return (
@@ -73,6 +75,12 @@ export default function Stock({ code }: { code: string }) {
     const stock = realResp.data.snapshot[code]
     const stockObj = Object.fromEntries(realResp.data.fields.map((_, i) => [realResp.data.fields[i], stock?.[i]]))
 
+    // A 股才有选股宝图表 / 筹码分布 / 相关资讯（后两者依赖 ashare 日线与快讯库）
+    const isAShare = /\.(SS|SZ|SH|BJ)$/i.test(code)
+    const bareCode = code.split('.')[0] ?? code
+    const suffix = (code.split('.')[1] ?? '').toUpperCase()
+    const market = suffix === 'SZ' ? 'sz' : suffix === 'BJ' ? 'bj' : 'sh'
+
     return (
         <div className="w-full flex flex-col gap-8 p-6">
             <div>
@@ -98,10 +106,13 @@ export default function Stock({ code }: { code: string }) {
             </div>
 
             <div className="flex flex-row gap-8 w-full">
-                <iframe
-                    src={`https://xuangubao.cn/tools/chart-widget/ashares/${code}`}
-                    className="w-[780px] h-[475px] rounded flex-none bg-gray-50"
-                />
+                {/* 选股宝图表组件只支持 A 股；港股/美股只展示指标区 */}
+                {isAShare && (
+                    <iframe
+                        src={`https://xuangubao.cn/tools/chart-widget/ashares/${code}`}
+                        className="w-[780px] h-[475px] rounded flex-none bg-gray-50"
+                    />
+                )}
                 <div className="flex flex-col flex-1">
                     <div className="font-semibold border-l-4 border-red-500 pl-2 mb-4 text-xl">主要指标</div>
                     <div className="flex flex-col gap-2 px-4">
@@ -120,6 +131,24 @@ export default function Stock({ code }: { code: string }) {
                     </div>
                 </div>
             </div>
+
+            {/* 筹码分布 + 相关资讯（仅 A 股，数据来自 ashare 日线与快讯库） */}
+            {isAShare && (
+                <div className="flex flex-col lg:flex-row gap-8 w-full">
+                    <div className="flex flex-col flex-1 min-w-0">
+                        <div className="font-semibold border-l-4 border-yellow-500 pl-2 mb-4 text-xl">筹码分布</div>
+                        <StockChips
+                            code={bareCode}
+                            market={market}
+                            currentPrice={stockObj['last_px'] as number}
+                        />
+                    </div>
+                    <div className="flex flex-col flex-1 min-w-0">
+                        <div className="font-semibold border-l-4 border-blue-500 pl-2 mb-4 text-xl">相关资讯</div>
+                        <StockNews code={bareCode} market={market} />
+                    </div>
+                </div>
+            )}
         </div>
     )
 

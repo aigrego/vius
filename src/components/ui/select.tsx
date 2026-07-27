@@ -42,6 +42,9 @@ function Select({ value, onValueChange, children }: SelectProps) {
   const [, bump] = React.useReducer((x: number) => x + 1, 0);
 
   const registerLabel = React.useCallback((v: string, label: React.ReactNode) => {
+    // label 未变化时不触发重渲染（SelectItem 的注册 effect 依赖 ctx，
+    // 否则 bump → 重渲染 → 新 ctx → 再注册 会形成死循环）
+    if (labelsRef.current.get(v) === label) return;
     labelsRef.current.set(v, label);
     bump();
   }, []);

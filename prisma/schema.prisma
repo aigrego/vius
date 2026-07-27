@@ -9,16 +9,31 @@ datasource db {
 
 // 用户（飞书 OAuth 或账号密码登录）
 model User {
-  id           String   @id @default(uuid())
-  username     String   @unique
-  passwordHash String   @map("password_hash") // '!oauth' 表示未设密码、仅 OAuth 登录
+  id           String      @id @default(uuid())
+  username     String      @unique
+  passwordHash String      @map("password_hash") // '!oauth' 表示未设密码、仅 OAuth 登录
   name         String?
-  role         String   @default("member") // admin / member
-  larkUnionId  String?  @unique @map("lark_union_id")
-  avatarUrl    String?  @map("avatar_url")
-  createdAt    DateTime @default(now()) @map("created_at")
+  role         String      @default("member") // admin / member
+  larkUnionId  String?     @unique @map("lark_union_id")
+  avatarUrl    String?     @map("avatar_url")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  emails       UserEmail[]
+  watchlists   Watchlist[]
 
   @@map("users")
+}
+
+// 用户邮箱（多邮箱：任一邮箱可作为登录账号；source 标记来源，决定「Lark 验证」等 badge）
+model UserEmail {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  email     String   @unique // 全局唯一，小写存储
+  isPrimary Boolean  @default(false) @map("is_primary")
+  source    String   @default("manual") // manual / feishu / lark
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_emails")
 }
 
 enum StockSource {
@@ -39,10 +54,11 @@ model Stock {
   type   StockType
 }
 
-// 自选股/持仓
+// 自选股/持仓（按用户隔离：每人一个独立股票池）
 model Watchlist {
   id         Int      @id @default(autoincrement())
-  code       String   @unique @db.VarChar(20)
+  userId     String   @map("user_id")
+  code       String   @db.VarChar(20)
   name       String   @db.VarChar(100)
   market     String   @db.VarChar(10)
   type       String   @default("individual") @db.VarChar(20)
@@ -50,7 +66,9 @@ model Watchlist {
   alertsJson String   @map("alerts_json")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(0)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, code])
   @@map("watchlist")
 }
 
@@ -67,9 +85,10 @@ model AuditLog {
   @@map("audit_log")
 }
 
-// 告警历史
+// 告警历史（userId 为归属用户；存量老数据为 null，仅全体清理时可见）
 model AlertHistory {
   id             Int      @id @default(autoincrement())
+  userId         String?  @map("user_id")
   code           String   @db.VarChar(20)
   alertType      String   @map("alert_type") @db.VarChar(50)
   severity       String   @db.VarChar(20)
@@ -79,6 +98,7 @@ model AlertHistory {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamp(0)
 
   @@index([code, alertType, createdAt])
+  @@index([userId, createdAt])
   @@map("alert_history")
 }
 

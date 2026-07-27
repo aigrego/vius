@@ -7,10 +7,24 @@ const VALID_MARKETS = ['sh', 'sz', 'bj', 'hk', 'us'];
 // 股票代码格式（会被拼进外部行情 URL，必须严格校验）
 const CODE_PATTERN = /^[0-9A-Za-z.]{1,12}$/;
 
-// GET /api/stocks - 获取所有股票
+// GET /api/stocks - 获取当前用户的股票池（按账号隔离）
 export async function GET() {
   try {
+    let session;
+    try {
+      session = await requireUser();
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        return NextResponse.json(
+          { success: false, error: '未登录' },
+          { status: 401 }
+        );
+      }
+      throw e;
+    }
+
     const stocks = await prisma.watchlist.findMany({
+      where: { userId: session.uid },
       orderBy: { createdAt: 'desc' }
     });
 
@@ -78,6 +92,7 @@ export async function POST(request: Request) {
     const [stock] = await prisma.$transaction([
       prisma.watchlist.create({
         data: {
+          userId: session.uid,
           code,
           name,
           market,

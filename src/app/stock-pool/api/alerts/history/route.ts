@@ -2,9 +2,21 @@ import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import prisma from '@/lib/prisma';
 
-// GET /api/alerts/history - 获取预警历史
+// GET /api/alerts/history - 获取当前用户的预警历史（按账号隔离）
 export async function GET(request: Request) {
   try {
+    let session;
+    try {
+      session = await requireUser();
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        return NextResponse.json(
+          { success: false, error: '未登录' },
+          { status: 401 }
+        );
+      }
+      throw e;
+    }
 
     const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
@@ -15,6 +27,7 @@ export async function GET(request: Request) {
 
     const history = await prisma.alertHistory.findMany({
       where: {
+        userId: session.uid,
         createdAt: { gte: since },
         ...(code && { code })
       },

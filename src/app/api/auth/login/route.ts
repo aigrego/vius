@@ -4,6 +4,7 @@ import { verifyPassword } from '@/lib/password';
 import { createSessionCookie } from '@/lib/session';
 
 /* POST /api/auth/login { username, password } → session cookie + 用户信息。
+   username 也可以是任一已绑定邮箱（user_emails，见个人资料页）。
    OAuth-only 账号的 passwordHash 是 '!oauth'（永远不是合法 bcrypt hash），
    明确拒绝并提示改用飞书/Lark 登录。 */
 export async function POST(req: NextRequest) {
@@ -19,7 +20,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ code: 400, data: null, message: '用户名和密码必填' }, { status: 400 });
   }
 
-  const u = await prisma.user.findUnique({ where: { username } });
+  let u = await prisma.user.findUnique({ where: { username } });
+  // 任一邮箱均可作为登录账号
+  if (!u && username.includes('@')) {
+    const record = await prisma.userEmail.findUnique({ where: { email: username.toLowerCase() } });
+    if (record) u = await prisma.user.findUnique({ where: { id: record.userId } });
+  }
   if (u && u.passwordHash === '!oauth') {
     return NextResponse.json(
       { code: 401, data: null, message: '该账号未设置密码，请使用飞书/Lark 登录' },

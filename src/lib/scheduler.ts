@@ -5,7 +5,7 @@
 import cron from 'node-cron';
 import { syncDailyStocks, getBeijingDateStr } from '@/lib/jobs/sync-daily';
 import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
-import { runAlertCheck } from '@/lib/jobs/check-alerts';
+import { runAlertCheckAll } from '@/lib/jobs/check-alerts';
 import { syncNews } from '@/lib/jobs/sync-news';
 
 // 当前北京时间（服务器时区可能不是东八区，统一换算）
@@ -39,7 +39,7 @@ async function runDailyCloseJobs(): Promise<void> {
   }
   try {
     console.log('[scheduler] runAlertCheck started');
-    const result = await runAlertCheck();
+    const result = await runAlertCheckAll();
     console.log(`[scheduler] runAlertCheck finished: triggered=${result.triggered} saved=${result.saved}`);
   } catch (error) {
     console.error('[scheduler] runAlertCheck failed:', error);
@@ -53,7 +53,7 @@ async function runIntradayAlertCheck(): Promise<void> {
   if (minutes < 9 * 60 + 30 || minutes > 15 * 60) return;
   try {
     console.log('[scheduler] intraday runAlertCheck started');
-    const result = await runAlertCheck();
+    const result = await runAlertCheckAll();
     console.log(`[scheduler] intraday runAlertCheck finished: triggered=${result.triggered} saved=${result.saved}`);
   } catch (error) {
     console.error('[scheduler] intraday runAlertCheck failed:', error);

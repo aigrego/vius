@@ -6,11 +6,11 @@
 
 `vius`（观微）是一个 A 股行情同步、多维分析与持仓监控工具，自 `orioles-service` 的 stock/stock-pool 功能抽离而来。功能：
 
-- **行情总览**（`/stock`）：指数卡片、华尔街见闻/选股宝快讯流、行业/涨跌板块（前端直连第三方公开 API）
-- **股票池**（`/stock-pool`）：自选股/持仓管理、实时盈亏、阈值告警（飞书 webhook 推送）、审计日志
+- **行情总览**（`/stock`）：指数卡片、华尔街见闻/选股宝快讯流、行业/涨跌板块（快讯流前端直连第三方公开 API；行情快照与板块排行已改为服务端代理 `/api/stocks/real`、`/api/stocks/plates-qq`——wallstcn api-ddc 已下线、腾讯接口无 CORS 头）
+- **股票池**（`/stock-pool`）：自选股/持仓管理、实时盈亏、阈值告警（飞书 webhook 推送）、审计日志；**按账号隔离**，每人一个独立池子（`watchlist.user_id`）
 - **A股总览**（`/stock-pool/ashare`）：全市场 4900+ 股票清单/日线统计、手动触发同步、股票检索、快讯流
 - **放量信号**（`/stock-pool/analysis`）：每日收盘后自动计算的底部/顶部放量信号
-- **个股详情**：K 线（MA/MACD/RSI/BOLL）、筹码分布（近似模型）、关联资讯
+- **个股详情**：股票池/A股总览/放量信号的行点击开 `components/stock-pool/stock-detail-modal` 弹窗（K线走势=选股宝图表组件、筹码分布、相关资讯）；`/stock/[code]` 统一详情页 = 实时主要指标（`/api/stocks/real`）+ 同款选股宝图表 + 筹码分布/相关资讯区块（后两者仅 A 股）
 
 ## 技术栈
 
@@ -43,15 +43,21 @@ src/
 │   ├── (app)/                 # 主应用路由组：layout = AuthGate + AppShell
 │   │   ├── stock/             # 行情总览 + [code] 个股详情
 │   │   ├── stock-pool/        # 股票池 + analysis/ 信号 + ashare/ A股总览
+│   │   ├── profile/           # 个人资料（资料/安全：多邮箱、改密、OAuth 绑定）
+│   │   ├── settings/          # 设置（主题真实生效，其余偏好 localStorage 占位）
+│   │   ├── agent/             # Agent 接入（占位页）
 │   │   └── page.tsx           # redirect /stock
+│   ├── icon.svg               # 站点 favicon（放大镜 + 行情脉冲线，同 components/Logo.tsx）
 │   ├── api/auth/              # login/logout/session/[provider]/login/callback
-│   ├── api/stocks/            # 指数清单
+│   │   └── profile/           # 资料/改密/多邮箱 emails(+primary)/解绑 unbind-oauth
+│   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates-qq/ 腾讯板块代理
 │   ├── api/ashare/            # A股数据 API（stocks/daily/chips/news/signals/stats/sync）
 │   │   └── （注意路径：stock-pool 的 API 在 src/app/stock-pool/api/，与页面同目录）
 │   └── stock-pool/api/        # 自选股/实时/统计/告警 API
 ├── components/
-│   ├── ui/                    # 基础组件（原生实现）
-│   ├── stock-pool/            # 个股详情弹窗、K线、筹码、资讯
+│   ├── ui/                    # 基础组件（原生实现，含 switch）
+│   ├── stock-pool/            # 个股详情弹窗、K线（选股宝 iframe）、筹码、资讯
+│   ├── Logo.tsx               # logo（放大镜+脉冲线；brand/white 两变体）
 │   ├── AppShell.tsx / Header.tsx / Sidebar.tsx / AuthGate.tsx
 ├── model/                     # 数据访问层（Prisma，每模型一个文件）
 ├── lib/
@@ -63,6 +69,7 @@ src/
 │   ├── jobs/                                  # sync-daily / sync-news / check-alerts
 │   └── analysis/                              # volume-signals / chip-distribution
 ├── server/lark.ts             # 飞书/Lark OAuth
+├── server/user-emails.ts      # 多邮箱辅助（回填/OAuth 邮箱落表/格式校验）
 ├── hooks/  types/  utils/
 ├── instrumentation.ts         # register() → scheduler
 └── middleware.ts              # cookie 存在性检查 + 安全响应头
@@ -74,6 +81,9 @@ src/
   - `/api/ashare/*` 与 `/api/auth/*`：`{code:200, data, message}`（成功 code=200）
   - `/stock-pool/api/*`：`{success:true, data}` / `{success:false, error}`
 - **鉴权**：API 内 `requireUser()`（抛 `UnauthorizedError` → 各路由按自家信封返回 401）；`POST /api/ashare/sync` 额外支持 `Authorization: Bearer $CRON_SECRET`。middleware 只查 cookie 存在性，真正校验在 API 层
+- **股票池按账号隔离**：`watchlist.user_id`（`@@unique([userId, code])`，级联删除）；`/stock-pool/api/*` 全部按 `session.uid` 过滤；告警历史 `alert_history.user_id` 可空（存量为 null）。定时告警走 `runAlertCheckAll()` 按用户分组跑、飞书推送标题带归属用户名；手动「检查预警」只查当前用户
+- **多邮箱**：`user_emails` 表（全局唯一、小写、source=manual/feishu/lark）；任一邮箱可登录（login 路由先查 username 再查邮箱）；OAuth 回调把带回的邮箱落表；老用户 username 是邮箱时 GET /api/auth/profile 惰性回填主邮箱
+- **OAuth bind 模式**：已登录用户访问 `/api/auth/<provider>/login` 时 state='bind'，回调把 unionId 绑到当前账号（被他人占用跳 `/profile?tab=security&error=bind`）；解绑走 `POST /api/auth/profile/unbind-oauth`（无密码账号拒绝）
 - **Next 16**：动态路由 `params` 是 Promise，必须 `await ctx.params`
 - **注释以中文为主**；路径别名 `@/* → ./src/*`
 - **无测试框架**；`test/*.http` 用 REST Client 手动测

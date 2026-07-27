@@ -13,7 +13,7 @@ import { TWallStcnLive, TLivesMap, TRealData, TSymbol } from "../type"
 function StocksTag({ symbols }: { symbols: TSymbol[] }) {
 
     const fields = ["prod_code", "prod_name", "px_change", "px_change_rate", "price_precision", "delisting_date"]
-    const { data: realResp = { data: { fields: [], snapshot: {} } } } = useSWR<TRealData>(`https://api-ddc.wallstcn.com/market/real?prod_code=${symbols.map(item => item.key).join(',')}&fields=${fields.join(',')}`, http.getAll, { refreshInterval: 15000, revalidateOnFocus: false })
+    const { data: realResp = { data: { fields: [], snapshot: {} } } } = useSWR<TRealData>(`/api/stocks/real?prod_code=${symbols.map(item => item.key).join(',')}&fields=${fields.join(',')}`, http.getAll, { refreshInterval: 15000, revalidateOnFocus: false })
 
     const render = (stock: Array<string | number>) => {
         const stockObj = Object.fromEntries(fields.map((_, i) => [fields[i], stock[i]]))
