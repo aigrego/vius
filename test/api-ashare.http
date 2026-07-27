@@ -1,0 +1,37 @@
+@base = http://localhost:3000
+@cronSecret = 填入 .env 的 CRON_SECRET
+
+### A股统计
+GET {{base}}/api/ashare/stats
+
+### 股票清单（搜索/筛选/分页）
+GET {{base}}/api/ashare/stocks?keyword=茅台&market=sh&page=1&pageSize=20
+
+### 单股日线
+GET {{base}}/api/ashare/stocks/600519/daily?limit=120
+
+### 单股筹码分布
+GET {{base}}/api/ashare/stocks/600519/chips
+
+### 单股关联快讯
+GET {{base}}/api/ashare/stocks/600519/news?limit=30
+
+### 快讯列表（只看已关联）
+GET {{base}}/api/ashare/news?page=1&pageSize=30&onlyMatched=1
+
+### 放量信号
+GET {{base}}/api/ashare/signals?type=bottom_volume&limit=100
+
+### 手动同步-全量
+POST {{base}}/api/ashare/sync?type=all
+Authorization: Bearer {{cronSecret}}
+
+### 手动同步-指定股票回补
+POST {{base}}/api/ashare/sync?type=daily&codes=600519,000001
+Authorization: Bearer {{cronSecret}}
+
+### 登录（账号密码）
+POST {{base}}/api/auth/login
+Content-Type: application/json
+
+{"username": "admin", "password": "admin123"}

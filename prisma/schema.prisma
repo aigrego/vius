@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 用户（飞书 OAuth 或账号密码登录）
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String   @map("password_hash") // '!oauth' 表示未设密码、仅 OAuth 登录
+  name         String?
+  role         String   @default("member") // admin / member
+  larkUnionId  String?  @unique @map("lark_union_id")
+  avatarUrl    String?  @map("avatar_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+enum StockSource {
+  SS
+  SZ
+}
+
+enum StockType {
+  ZS
+  AG
+}
+
+// 指数/股票清单（行情总览页用）
+model Stock {
+  id     Int         @id @default(autoincrement())
+  code   String      @unique @db.VarChar(50)
+  source StockSource
+  type   StockType
+}
+
+// 自选股/持仓
+model Watchlist {
+  id         Int      @id @default(autoincrement())
+  code       String   @unique @db.VarChar(20)
+  name       String   @db.VarChar(100)
+  market     String   @db.VarChar(10)
+  type       String   @default("individual") @db.VarChar(20)
+  cost       Decimal  @default(0) @db.Decimal(10, 4)
+  alertsJson String   @map("alerts_json")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@map("watchlist")
+}
+
+// 审计日志
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  action    String   @db.VarChar(50)
+  code      String?  @db.VarChar(20)
+  details   String?
+  agentId   String?  @map("agent_id") @db.VarChar(100)
+  timestamp DateTime @default(now()) @db.Timestamp(0)
+
+  @@index([timestamp])
+  @@map("audit_log")
+}
+
+// 告警历史
+model AlertHistory {
+  id             Int      @id @default(autoincrement())
+  code           String   @db.VarChar(20)
+  alertType      String   @map("alert_type") @db.VarChar(50)
+  severity       String   @db.VarChar(20)
+  message        String
+  currentValue   Decimal? @map("current_value") @db.Decimal(10, 4)
+  thresholdValue Decimal? @map("threshold_value") @db.Decimal(10, 4)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+
+  @@index([code, alertType, createdAt])
+  @@map("alert_history")
+}
+
+// A股股票清单（每日同步自东方财富）
+model StockBasic {
+  id         Int       @id @default(autoincrement())
+  code       String    @unique @db.VarChar(10)
+  name       String    @db.VarChar(50)
+  market     String    @db.VarChar(10) // sh/sz/bj
+  listedDate DateTime? @map("listed_date")
+  isActive   Boolean   @default(true) @map("is_active") // 退市置 false
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@map("stock_basic")
+}
+
+// A股日线行情（每日收盘后同步）
+model StockDaily {
+  id        Int      @id @default(autoincrement())
+  code      String   @db.VarChar(10)
+  date      DateTime @db.Date
+  open      Float
+  close     Float
+  high      Float
+  low       Float
+  volume    Float
+  amount    Float
+  changePct Float    @map("change_pct")
+  turnover  Float? // 换手率（筹码分布计算需要）
+
+  @@unique([code, date])
+  @@index([date])
+  @@map("stock_daily")
+}
+
+// 分析信号（底部放量/顶部放量等）
+model StockSignal {
+  id     Int      @id @default(autoincrement())
+  code   String   @db.VarChar(10)
+  date   DateTime @db.Date
+  type   String   @db.VarChar(30) // bottom_volume / top_volume
+  detail String? // JSON：量比、位置分位等
+
+  @@unique([code, date, type])
+  @@index([date, type])
+  @@map("stock_signal")
+}
+
+// 资讯快讯（定时抓取落库，codes 为关联到的股票代码）
+model NewsFlash {
+  id          Int      @id @default(autoincrement())
+  source      String   @db.VarChar(20) // wallstcn / xuangubao
+  externalId  String   @map("external_id") @db.VarChar(50)
+  title       String?  @db.VarChar(500)
+  content     String
+  codes       String? // 匹配到的股票代码，逗号分隔
+  publishedAt DateTime @map("published_at")
+
+  @@unique([source, externalId])
+  @@index([publishedAt])
+  @@map("news_flash")
+}
