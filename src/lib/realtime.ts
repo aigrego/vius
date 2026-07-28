@@ -129,8 +129,8 @@ async function fetchFromTencent(codes: string[], markets: string[]): Promise<Rec
 
     const code = codeKey.toUpperCase();
     const current = parseFloat(parts[3]!);
-    const close = parseFloat(parts[2]!);
-    
+    const close = parseFloat(parts[4]!); // 腾讯格式：parts[2]=代码、parts[3]=现价、parts[4]=昨收
+
     result[code] = {
       code,
       name: parts[1] || parts[0]!,
