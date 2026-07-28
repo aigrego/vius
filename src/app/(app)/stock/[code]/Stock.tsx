@@ -58,9 +58,10 @@ export default function Stock({ code }: { code: string }) {
     }
 
     const getTextColor = (num: number) => {
-        if (num > 0) return 'text-red-600'
+        // 涨跌色随设置页「涨跌配色」翻转（--up/--down，默认红涨绿跌）
+        if (num > 0) return 'text-up'
         if (num == 0) return 'text-gray-600'
-        return 'text-green-600'
+        return 'text-down'
     }
 
     const formatUnit = (num: number) => {

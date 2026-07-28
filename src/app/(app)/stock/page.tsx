@@ -1,5 +1,5 @@
 import { TrendingDown, TrendingUp } from 'lucide-react';
-import Indices from "./Indices";
+import Overview from "./Overview";
 import { XuangubaoLives, WallstcnLives } from "./Lives";
 import { XuangubaoPlates, QQPlates } from "./Plates";
 
@@ -10,7 +10,7 @@ export const metadata = {
 export default function StockPage() {
     return (
         <div className='w-full p-4 md:p-8 flex flex-col gap-4 md:gap-6'>
-            <Indices />
+            <Overview />
 
             <div className="w-full flex flex-1 gap-4 md:gap-6">
                 <div className="flex flex-1 flex-col bg-white rounded-2xl drop-shadow">

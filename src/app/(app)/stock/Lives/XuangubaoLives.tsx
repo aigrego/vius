@@ -22,7 +22,7 @@ function StocksTag({ stocks }: { stocks: TStockInfo[] }) {
         const state = {
             icon: change > 0 ? '▲' : change === 0 ? '' : '▼',
             rate: StockFormat.rate(stockObj['px_change_rate'] as number / 100),
-            style: change > 0 ? 'text-red-600 border-red-600' : change === 0 ? 'text-gray-600 border-gray-600' : 'text-green-600 border-green-600',
+            style: change > 0 ? 'text-up border-up' : change === 0 ? 'text-gray-600 border-gray-600' : 'text-down border-down',
         }
         return (
             <Link href={`/stock/${stockObj['prod_code']}`} key={stockObj['prod_code']}>
@@ -94,7 +94,7 @@ export default function XuangubaoLives({ refreshInterval = 60000 }) {
             if (pre.length === 0) return data.messages
             const index = data.messages.findIndex((item: TXuangubaoLive) => item.id === pre[0]?.id)
             if (index === 0) return pre
-            if (index > 0) return [...(data.messages.subarray(0, index)), ...pre]
+            if (index > 0) return [...(data.messages.slice(0, index)), ...pre]
             return [...(data.messages), ...pre]
         })
         setIsLoading(false)

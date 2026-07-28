@@ -5,9 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { applyTheme, readThemePref, type ThemePref } from '@/lib/theme';
+import { applyUpColor, type UpColorPref } from '@/lib/updown';
 
 /* 设置页：偏好。
-   主题真实生效（复用 lib/theme 的 light/dark/system）；语言、时区、语言切换器、
+   主题（lib/theme）与涨跌配色（lib/updown）真实生效；语言、时区、语言切换器、
    通知偏好目前无对应体系，持久化在 localStorage('vius-prefs') 仅作占位。 */
 
 interface Prefs {
@@ -15,6 +16,7 @@ interface Prefs {
   timezone: string;
   langSwitcher: boolean;
   emailNotify: boolean;
+  upColor: UpColorPref;
 }
 
 const PREFS_KEY = 'vius-prefs';
@@ -23,6 +25,7 @@ const DEFAULT_PREFS: Prefs = {
   timezone: 'Asia/Shanghai',
   langSwitcher: true,
   emailNotify: false,
+  upColor: 'red',
 };
 
 function readPrefs(): Prefs {
@@ -131,6 +134,23 @@ export default function SettingsPage() {
                   <SelectItem value="light">浅色</SelectItem>
                   <SelectItem value="dark">深色</SelectItem>
                   <SelectItem value="system">跟随系统</SelectItem>
+                </SelectContent>
+              </Select>
+            </Row>
+            {/* 涨跌配色：改动即写回 vius-prefs 并翻转 --up/--down CSS 变量，全局立即生效 */}
+            <Row label="涨跌配色" desc="行情涨跌数字与板块的颜色方向">
+              <Select
+                value={prefs.upColor}
+                onValueChange={(v) => {
+                  const pref = (v === 'green' ? 'green' : 'red') as UpColorPref;
+                  updatePrefs({ upColor: pref });
+                  applyUpColor(pref);
+                }}
+              >
+                <SelectTrigger className="w-[180px]" />
+                <SelectContent>
+                  <SelectItem value="red">红涨绿跌</SelectItem>
+                  <SelectItem value="green">绿涨红跌</SelectItem>
                 </SelectContent>
               </Select>
             </Row>

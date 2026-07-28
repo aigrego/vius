@@ -277,8 +277,8 @@ export default function StockPoolAnalysisPage() {
                       <TableCell className="text-right font-mono">
                         ¥{signal.detail.close.toFixed(2)}
                       </TableCell>
-                      {/* A股惯例：红涨绿跌 */}
-                      <TableCell className={`text-right font-mono ${isUp ? 'text-red-400' : 'text-green-400'}`}>
+                      {/* 涨跌色随设置页「涨跌配色」翻转（--up/--down，默认红涨绿跌） */}
+                      <TableCell className={`text-right font-mono ${isUp ? 'text-up' : 'text-down'}`}>
                         {isUp ? '+' : ''}{signal.detail.changePct.toFixed(2)}%
                       </TableCell>
                       <TableCell className="text-right font-mono">

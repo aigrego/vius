@@ -18,9 +18,10 @@ export default function QQPlates() {
     )
 
     const getColor = (num: number) => {
-        if (num > 0) return "bg-red-600 hover:bg-red-500 bg-opacity-75"
+        // 涨跌色随设置页「涨跌配色」翻转（--up/--down，默认红涨绿跌）
+        if (num > 0) return "bg-up hover:brightness-110 bg-opacity-75"
         if (num == 0) return "bg-gray-600 hover:bg-gray-500 bg-opacity-75"
-        return "bg-green-600 hover:bg-green-500 bg-opacity-75"
+        return "bg-down hover:brightness-110 bg-opacity-75"
     }
 
     return (

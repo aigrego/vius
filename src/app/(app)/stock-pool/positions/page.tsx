@@ -281,7 +281,8 @@ export default function PositionsPage() {
             </CardContent>
           </Card>
 
-          <Card className={`bg-gradient-to-br ${totalPnl >= 0 ? 'from-green-500/10 to-emerald-500/10 border-green-500/20' : 'from-red-500/10 to-rose-500/10 border-red-500/20'}`}>
+          {/* 总盈亏卡片：涨跌色随设置页「涨跌配色」翻转（--up/--down，默认红涨绿跌） */}
+          <Card className={`bg-gradient-to-br ${totalPnl >= 0 ? 'from-up/10 to-up/5 border-up/20' : 'from-down/10 to-down/5 border-down/20'}`}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-normal text-fg-3 flex items-center gap-2">
                 <TrendingUp className="w-4 h-4" />
@@ -289,11 +290,11 @@ export default function PositionsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className={`text-3xl font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              <div className={`text-3xl font-bold ${totalPnl >= 0 ? 'text-up' : 'text-down'}`}>
                 {stats.totalValue > 0 ? `${totalPnl >= 0 ? '+' : ''}¥${totalPnl.toFixed(2)}` : '-'}
               </div>
               {stats.totalValue > 0 && (
-                <p className={`text-xs mt-1 ${totalPnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                <p className={`text-xs mt-1 ${totalPnlPct >= 0 ? 'text-up' : 'text-down'}`}>
                   {totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%
                 </p>
               )}
@@ -367,10 +368,10 @@ export default function PositionsPage() {
                       <TableCell className="text-right font-mono">
                         {p.current ? `¥${p.current.toFixed(2)}` : '-'}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${isUp ? 'text-green-400' : 'text-red-400'}`}>
+                      <TableCell className={`text-right font-mono ${isUp ? 'text-up' : 'text-down'}`}>
                         {p.changePct !== undefined ? `${isUp ? '+' : ''}${p.changePct.toFixed(2)}%` : '-'}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                      <TableCell className={`text-right font-mono ${isProfit ? 'text-up' : 'text-down'}`}>
                         {pnl !== undefined
                           ? `${isProfit ? '+' : ''}¥${pnl.toFixed(2)} (${isProfit ? '+' : ''}${pnlPct!.toFixed(2)}%)`
                           : '-'}

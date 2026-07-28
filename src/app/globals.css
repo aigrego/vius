@@ -78,6 +78,11 @@
   --shadow-3: 0 12px 28px rgba(11, 18, 32, 0.1), 0 4px 8px rgba(11, 18, 32, 0.06);
   --shadow-4: 0 24px 56px rgba(11, 18, 32, 0.18), 0 8px 16px rgba(11, 18, 32, 0.1);
 
+  /* 涨跌配色（默认红涨绿跌；:root[data-up-color='green'] 时互换，见下）
+     色值取 Tailwind v4 的 red-600 / green-600 */
+  --up: #dc2626;
+  --down: #16a34a;
+
   /* shadcn focus convenience */
   --ring: var(--brand-blue);
 }
@@ -114,6 +119,12 @@
   --ring: var(--xgent-orange-500);
 }
 
+/* 涨跌配色 = 绿涨红跌：互换 --up/--down（仿上面的 data-accent 写法） */
+:root[data-up-color='green'] {
+  --up: #16a34a;
+  --down: #dc2626;
+}
+
 /* Tailwind v4 theme mapping — colors reference the runtime CSS variables above
    (via @theme inline) so [data-theme] / [data-accent] flips keep working. */
 @theme inline {
@@ -140,6 +151,10 @@
   --color-warning-50: var(--warning-50);
   --color-danger: var(--danger-500);
   --color-danger-50: var(--danger-50);
+
+  /* 涨跌配色：text-up/text-down/bg-up/bg-down/border-up/border-down */
+  --color-up: var(--up);
+  --color-down: var(--down);
 
   --color-xgent-blue-50: var(--xgent-blue-50);
   --color-xgent-orange-50: var(--xgent-orange-50);

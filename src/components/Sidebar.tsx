@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, KeyRound, LayoutGrid, LineChart, ListChecks, Settings, Wallet } from 'lucide-react';
+import { Activity, KeyRound, LayoutGrid, LineChart, ListChecks, Settings, Timer, Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* 左侧 244px 导航栏：行情总览 / 股票池 / 持仓股 / A股总览 / 放量信号，
@@ -66,6 +66,27 @@ const BOTTOM_ITEMS: NavEntry[] = [
   },
 ];
 
+// 「定时任务」入口：插在「设置」前，仅 admin 可见
+const CRON_ITEM: NavEntry = {
+  icon: <Timer size={16} />,
+  label: '定时任务',
+  href: '/cron',
+  match: (p) => p === '/cron',
+};
+
+// 拉取当前会话角色（兼容 { user } 与 { data: { user } } 两种包裹）；失败返回 null
+async function fetchSessionRole(): Promise<string | null> {
+  try {
+    const res = await fetch('/api/auth/session');
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const user = (data?.user ?? data?.data?.user ?? null) as { role?: string | null } | null;
+    return user?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function NavItem({ entry, active }: { entry: NavEntry; active: boolean }) {
   return (
     <Link
@@ -84,6 +105,23 @@ function NavItem({ entry, active }: { entry: NavEntry; active: boolean }) {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [role, setRole] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchSessionRole().then((r) => {
+      if (!cancelled) setRole(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // admin 在「设置」前插入「定时任务」入口；拉取失败/非 admin 不显示
+  const bottomItems =
+    role === 'admin'
+      ? [BOTTOM_ITEMS[0], CRON_ITEM, BOTTOM_ITEMS[1]]
+      : BOTTOM_ITEMS;
 
   return (
     <aside className="flex w-[244px] flex-none flex-col overflow-hidden border-r border-border bg-surface-2">
@@ -94,9 +132,9 @@ export function Sidebar() {
           ))}
         </div>
       </nav>
-      {/* 底部固定入口：Agent 接入 / 设置 */}
+      {/* 底部固定入口：Agent 接入 / 设置（admin 多一个「定时任务」） */}
       <div className="flex flex-none flex-col gap-px border-t border-border px-3 py-2">
-        {BOTTOM_ITEMS.map((item) => (
+        {bottomItems.map((item) => (
           <NavItem key={item.href} entry={item} active={item.match(pathname)} />
         ))}
       </div>

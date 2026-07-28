@@ -31,12 +31,13 @@ export default function RootLayout({
     >
       <body className="h-full">
         {/* 防闪烁主题引导脚本：首帧渲染前解析持久化偏好
-            （'light' | 'dark' | 'system'，默认 light），
-            逻辑与 src/lib/theme.ts 保持同步。 */}
+            （主题 'light' | 'dark' | 'system'，默认 light；
+            涨跌配色取 localStorage('vius-prefs') 的 upColor 字段，'green' 时绿涨红跌），
+            逻辑与 src/lib/theme.ts、src/lib/updown.ts 保持同步。 */}
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{var t=localStorage.getItem('theme');var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=d?'dark':'light'}catch(e){}",
+              "try{var t=localStorage.getItem('theme');var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';var p=JSON.parse(localStorage.getItem('vius-prefs')||'{}');if(p.upColor==='green')document.documentElement.dataset.upColor='green'}catch(e){}",
           }}
         />
         <Providers>{children}</Providers>

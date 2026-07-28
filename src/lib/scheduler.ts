@@ -1,12 +1,50 @@
-// 定时任务调度：每日收盘同步、盘中告警检查、快讯抓取
-// 通过 instrumentation.ts 的 register() 在 Node.js 运行时启动；
-// 用 globalThis 挂标记防止开发热重载时重复注册
+// 定时任务调度（注册表模式）：每日收盘同步、盘中告警检查、快讯抓取
+// - JOBS 注册全部任务（id/名称/说明/默认 cron/时区/handler）
+// - startScheduler() 由 instrumentation.ts 的 register() 在 Node.js 运行时启动，
+//   读 cron_job 覆盖表合并默认配置后逐个注册；用 globalThis 挂标记防止开发热重载重复注册
+// - rescheduleJob()/triggerJob()/listJobs() 供 /api/cron 管理端点调用（仅 admin）
+// - 每次执行落一条 cron_run 运行记录（running → success/failed + 耗时）；
+//   运行记录写库失败只打日志，绝不影响任务本身
 
-import cron from 'node-cron';
+import cron, { type ScheduledTask } from 'node-cron';
+import prisma from '@/lib/prisma';
 import { syncDailyStocks, getBeijingDateStr } from '@/lib/jobs/sync-daily';
 import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
 import { runAlertCheckAll } from '@/lib/jobs/check-alerts';
 import { syncNews } from '@/lib/jobs/sync-news';
+
+/* ---------- 任务定义 ---------- */
+
+export interface JobDef {
+  id: string;
+  name: string;
+  description: string;
+  cron: string; // 默认 cron 表达式（可被 cron_job 表覆盖）
+  timezone?: string; // 默认时区（不可覆盖）
+  handler: () => Promise<void>;
+}
+
+// API 层用来映射状态码的错误类型
+export class JobNotFoundError extends Error {
+  constructor(id: string) {
+    super(`任务不存在: ${id}`);
+    this.name = 'JobNotFoundError';
+  }
+}
+
+export class InvalidCronError extends Error {
+  constructor(expression: string) {
+    super(`cron 表达式非法: ${expression}`);
+    this.name = 'InvalidCronError';
+  }
+}
+
+export class JobRunningError extends Error {
+  constructor(id: string) {
+    super(`任务正在运行中: ${id}`);
+    this.name = 'JobRunningError';
+  }
+}
 
 // 当前北京时间（服务器时区可能不是东八区，统一换算）
 const getBeijingNow = (): Date =>
@@ -70,27 +108,241 @@ async function runSyncNews(): Promise<void> {
   }
 }
 
-export function startScheduler(): void {
+// 任务注册表：id 即 cron_job / cron_run 表里的外键
+export const JOBS: JobDef[] = [
+  {
+    id: 'daily-close',
+    name: '收盘同步与信号',
+    description: '日线同步 → 放量信号 → 告警检查（15:30 周一~周五）',
+    cron: '30 15 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    handler: runDailyCloseJobs,
+  },
+  {
+    id: 'intraday-alerts',
+    name: '盘中告警检查',
+    description: '盘中每 5 分钟检查自选股告警（函数内卡 9:30-15:00）',
+    cron: '*/5 9-15 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    handler: runIntradayAlertCheck,
+  },
+  {
+    id: 'sync-news',
+    name: '快讯同步',
+    description: '每 30 分钟抓取见闻/选股宝快讯（全天，不敏感于时区）',
+    cron: '*/30 * * * *',
+    handler: runSyncNews,
+  },
+];
+
+/* ---------- 模块级运行状态 ---------- */
+
+// 已注册的调度句柄（jobId → ScheduledTask），reschedule 时先销毁旧任务
+const scheduledTasks = new Map<string, ScheduledTask>();
+
+// 手动触发的运行互斥（单进程）：先查 cron_run 再插行存在竞态，
+// 两个并发请求可能都查到「无运行中」，用内存 Set 兜底
+const runningJobs = new Set<string>();
+
+/* ---------- 运行记录 ---------- */
+
+// 执行 handler 并落运行记录；runId 已传时复用该行（手动触发已先建好 running 行），
+// 否则这里先建（自动调度）。任何一步写库失败只 console.error，不影响任务本身
+async function executeJob(job: JobDef, trigger: 'auto' | 'manual', runId?: number): Promise<void> {
+  let id = runId ?? null;
+  if (id === null) {
+    try {
+      const run = await prisma.cronRun.create({
+        data: { jobId: job.id, trigger, status: 'running' },
+      });
+      id = run.id;
+    } catch (error) {
+      console.error(`[scheduler] 运行记录创建失败（${job.id}），任务照常执行:`, error);
+    }
+  }
+
+  const finish = async (status: 'success' | 'failed', message?: string): Promise<void> => {
+    if (id === null) return;
+    try {
+      await prisma.cronRun.update({
+        where: { id },
+        data: { status, message: message ?? null, finishedAt: new Date() },
+      });
+    } catch (error) {
+      console.error(`[scheduler] 运行记录更新失败（${job.id}#${id}）:`, error);
+    }
+  };
+
+  try {
+    await job.handler();
+    await finish('success');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[scheduler] 任务执行失败（${job.id}）:`, error);
+    await finish('failed', message.slice(0, 1000));
+  }
+}
+
+/* ---------- 调度控制 ---------- */
+
+// 按生效配置注册一个任务；enabled=false 时不排（配置仍会落库/返回）
+function scheduleJob(job: JobDef, cronExpr: string, enabled: boolean): void {
+  if (!enabled) {
+    console.log(`[scheduler] ${job.id} 已停用，跳过注册`);
+    return;
+  }
+  const task = cron.schedule(
+    cronExpr,
+    () => {
+      void executeJob(job, 'auto');
+    },
+    job.timezone ? { timezone: job.timezone } : undefined,
+  );
+  scheduledTasks.set(job.id, task);
+}
+
+// 读取覆盖配置（cron_job 表只存被修改过的任务行）；查询失败返回空 Map，调用方按默认配置兜底
+async function loadOverrides(): Promise<Map<string, { cron: string; enabled: boolean }>> {
+  try {
+    const rows = await prisma.cronJob.findMany();
+    return new Map(rows.map((r) => [r.id, { cron: r.cron, enabled: r.enabled }]));
+  } catch (error) {
+    console.error('[scheduler] 读取 cron_job 覆盖配置失败，按默认配置处理:', error);
+    return new Map();
+  }
+}
+
+// 启动调度：合并覆盖配置后逐个注册。永不抛出（instrumentation 调用方不 await）
+export async function startScheduler(): Promise<void> {
   const g = globalThis as unknown as { __oriolesSchedulerStarted?: boolean };
   if (g.__oriolesSchedulerStarted) return;
   g.__oriolesSchedulerStarted = true;
 
-  // cron 表达式按服务器本地时间触发，显式指定北京时区（A股交易时段以北京时间为准）
+  try {
+    const overrides = await loadOverrides();
+    for (const job of JOBS) {
+      const o = overrides.get(job.id);
+      scheduleJob(job, o?.cron ?? job.cron, o?.enabled ?? true);
+    }
+    console.log(`[scheduler] 定时任务已注册：${JOBS.map((j) => j.id).join(', ')}`);
+  } catch (error) {
+    console.error('[scheduler] 定时任务注册失败:', error);
+  }
+}
 
-  // 15:30 周一~周五：收盘同步 + 信号计算 + 告警检查
-  cron.schedule('30 15 * * 1-5', () => {
-    void runDailyCloseJobs();
-  }, { timezone: 'Asia/Shanghai' });
+// 修改任务配置：校验表达式 → 销毁旧任务 → 按新配置重新调度（enabled=false 则不排）→ upsert 覆盖行
+export async function rescheduleJob(id: string, cronExpr: string, enabled: boolean): Promise<void> {
+  const job = JOBS.find((j) => j.id === id);
+  if (!job) throw new JobNotFoundError(id);
+  if (!cron.validate(cronExpr)) throw new InvalidCronError(cronExpr);
 
-  // 盘中每 5 分钟（9-15 点，函数内再卡 9:30-15:00）：告警检查
-  cron.schedule('*/5 9-15 * * 1-5', () => {
-    void runIntradayAlertCheck();
-  }, { timezone: 'Asia/Shanghai' });
-
-  // 每 30 分钟：快讯抓取（全天，不敏感于时区）
-  cron.schedule('*/30 * * * *', () => {
-    void runSyncNews();
+  const old = scheduledTasks.get(id);
+  if (old) {
+    await old.stop();
+    await old.destroy();
+    scheduledTasks.delete(id);
+  }
+  scheduleJob(job, cronExpr, enabled);
+  await prisma.cronJob.upsert({
+    where: { id },
+    create: { id, cron: cronExpr, enabled },
+    update: { cron: cronExpr, enabled },
   });
+  console.log(`[scheduler] ${id} 已重新调度：cron="${cronExpr}" enabled=${enabled}`);
+}
 
-  console.log('[scheduler] 定时任务已注册（收盘同步 15:30 / 盘中告警 5min / 快讯 30min）');
+// 手动触发：已在运行中（内存互斥或 cron_run 存在 running 行）则拒绝；
+// 先建 running 行拿到 runId，再异步执行 handler（不 await）
+export async function triggerJob(id: string): Promise<number> {
+  const job = JOBS.find((j) => j.id === id);
+  if (!job) throw new JobNotFoundError(id);
+  if (runningJobs.has(id)) throw new JobRunningError(id);
+  const running = await prisma.cronRun.findFirst({
+    where: { jobId: id, status: 'running' },
+    select: { id: true },
+  });
+  if (running) throw new JobRunningError(id);
+
+  runningJobs.add(id);
+  try {
+    const run = await prisma.cronRun.create({
+      data: { jobId: id, trigger: 'manual', status: 'running' },
+    });
+    void (async () => {
+      try {
+        await executeJob(job, 'manual', run.id);
+      } finally {
+        runningJobs.delete(id);
+      }
+    })();
+    return run.id;
+  } catch (error) {
+    runningJobs.delete(id);
+    throw error;
+  }
+}
+
+/* ---------- 状态查询 ---------- */
+
+export interface JobRunInfo {
+  id: number;
+  trigger: string;
+  status: string;
+  message: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface JobStatus {
+  id: string;
+  name: string;
+  description: string;
+  cron: string; // 生效的 cron（覆盖优先）
+  defaultCron: string;
+  timezone: string | null;
+  enabled: boolean;
+  running: boolean;
+  lastRun: JobRunInfo | null;
+}
+
+// 注册表 + 生效配置 + 每 job 最近一条 cronRun + 是否运行中
+export async function listJobs(): Promise<JobStatus[]> {
+  const overrides = await loadOverrides();
+  return Promise.all(
+    JOBS.map(async (job) => {
+      const o = overrides.get(job.id);
+      let lastRun: JobRunInfo | null = null;
+      let running = runningJobs.has(job.id);
+      try {
+        const row = await prisma.cronRun.findFirst({
+          where: { jobId: job.id },
+          orderBy: { startedAt: 'desc' },
+        });
+        if (row) {
+          lastRun = {
+            id: row.id,
+            trigger: row.trigger,
+            status: row.status,
+            message: row.message,
+            startedAt: row.startedAt.toISOString(),
+            finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
+          };
+          running = running || row.status === 'running';
+        }
+      } catch (error) {
+        console.error(`[scheduler] 查询运行记录失败（${job.id}）:`, error);
+      }
+      return {
+        id: job.id,
+        name: job.name,
+        description: job.description,
+        cron: o?.cron ?? job.cron,
+        defaultCron: job.cron,
+        timezone: job.timezone ?? null,
+        enabled: o?.enabled ?? true,
+        running,
+        lastRun,
+      };
+    }),
+  );
 }

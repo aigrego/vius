@@ -26,13 +26,13 @@ function StocksTag({ symbols }: { symbols: TSymbol[] }) {
             state = {
                 icon: '▲',
                 rate: '+' + (stockObj['px_change_rate'] as number).toFixed(2),
-                style: 'text-red-600 border-red-600'
+                style: 'text-up border-up'
             }
         } else if (stockObj['px_change'] as number < 0) {
             state = {
                 icon: '▼',
                 rate: (stockObj['px_change_rate'] as number).toFixed(2),
-                style: 'text-green-600 border-green-600'
+                style: 'text-down border-down'
             }
         }
         return (
@@ -102,7 +102,7 @@ export default function WallstcnLives({ refreshInterval = 60000 }) {
             if (pre.length === 0) return data.items
             const index = data.items.findIndex((item: TWallStcnLive) => item.id === pre[0]?.id)
             if (index === 0) return pre
-            if (index > 0) return [...(data.items.subarray(0, index)), ...pre]
+            if (index > 0) return [...(data.items.slice(0, index)), ...pre]
             return [...(data.items), ...pre]
         })
     }, []);

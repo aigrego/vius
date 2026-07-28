@@ -494,16 +494,16 @@ export default function StockPoolPage() {
                       <TableCell className="text-right font-mono">
                         {stock.current ? `¥${stock.current.toFixed(2)}` : '-'}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${isUp ? 'text-green-400' : 'text-red-400'}`}>
+                      <TableCell className={`text-right font-mono ${isUp ? 'text-up' : 'text-down'}`}>
                         {stock.changePct ? `${isUp ? '+' : ''}${stock.changePct.toFixed(2)}%` : '-'}
                       </TableCell>
                       <TableCell className="text-right font-mono">
                         {stock.cost ? `¥${Number(stock.cost).toFixed(3)}` : '-'}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                      <TableCell className={`text-right font-mono ${isProfit ? 'text-up' : 'text-down'}`}>
                         {stock.pnlPct ? `${isProfit ? '+' : ''}${stock.pnlPct.toFixed(2)}%` : '-'}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                      <TableCell className={`text-right font-mono ${isProfit ? 'text-up' : 'text-down'}`}>
                         {stock.pnlAmount ? `${isProfit ? '+' : ''}¥${stock.pnlAmount.toFixed(2)}` : '-'}
                       </TableCell>
                       <TableCell className="text-right">

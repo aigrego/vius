@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import { resolveStock } from '@/lib/stock-resolver';
+import { fetchRealtimeQuotes } from '@/lib/realtime';
 import prisma from '@/lib/prisma';
 
 // 股票代码格式（会被拼进外部行情 URL，必须严格校验）
@@ -87,6 +88,17 @@ export async function POST(request: Request) {
       );
     }
 
+    // 关注价（markPrice）：best-effort 拉一次实时行情取当前价，失败为 null 不影响创建；
+    // 放在事务前，随 create 一次写入，避免创建后再补一次 update
+    let markPrice: number | null = null;
+    try {
+      const quotes = await fetchRealtimeQuotes([code], [resolved.market]);
+      const current = quotes.find(q => q.code.toUpperCase() === code.toUpperCase())?.current;
+      if (current && current > 0) markPrice = current;
+    } catch (e) {
+      console.warn(`Create stock: 关注价获取失败 ${code}:`, e);
+    }
+
     const agentId = session.username || 'web-ui';
 
     // 写操作与审计日志包在同一事务中
@@ -99,6 +111,7 @@ export async function POST(request: Request) {
           market: resolved.market,
           type: resolved.type,
           cost: 0,
+          markPrice,
           alertsJson: JSON.stringify(alerts || {})
         }
       }),

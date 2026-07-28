@@ -64,6 +64,7 @@ model Watchlist {
   market     String   @db.VarChar(10)
   type       String   @default("individual") @db.VarChar(20)
   cost       Decimal  @default(0) @db.Decimal(10, 4)
+  markPrice  Decimal? @map("mark_price") @db.Decimal(10, 4) // 关注时价格（算「关注后涨跌幅」用，存量为 null 时懒回填）
   alertsJson String   @map("alerts_json")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(0)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
@@ -178,4 +179,40 @@ model NewsFlash {
   @@unique([source, externalId])
   @@index([publishedAt])
   @@map("news_flash")
+}
+
+// 行情总览三排卡片缓存（indices 为全局 userId='*'，positions/watchlist 按用户隔离）
+model OverviewCache {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  kind      String   @db.VarChar(20) // indices / positions / watchlist
+  payload   String   @db.Text // JSON
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@unique([userId, kind])
+  @@map("overview_cache")
+}
+
+// 定时任务 cron 覆盖配置（仅被修改过的任务才有行，未覆盖时用代码注册表默认值）
+model CronJob {
+  id        String   @id // 对应 scheduler JOBS 注册表 id
+  cron      String   @db.VarChar(50)
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@map("cron_job")
+}
+
+// 定时任务运行记录
+model CronRun {
+  id         Int       @id @default(autoincrement())
+  jobId      String    @map("job_id") @db.VarChar(50)
+  trigger    String    @db.VarChar(10) // auto / manual
+  status     String    @db.VarChar(10) // running / success / failed
+  message    String?   @db.Text
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamp(0)
+  finishedAt DateTime? @map("finished_at") @db.Timestamp(0)
+
+  @@index([jobId, startedAt])
+  @@map("cron_run")
 }

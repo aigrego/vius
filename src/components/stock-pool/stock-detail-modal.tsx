@@ -66,7 +66,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
               <CardTitle className="text-xs text-fg-3 font-normal">当前价格</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-mono font-bold ${isUp ? 'text-green-400' : 'text-red-400'}`}>
+              <div className={`text-2xl font-mono font-bold ${isUp ? 'text-up' : 'text-down'}`}>
                 ¥{stock.current?.toFixed(2) || '-'}
               </div>
             </CardContent>
@@ -91,15 +91,15 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
             <CardContent className="flex items-center gap-2">
               {isProfit ? (
                 <>
-                  <TrendingUp className="w-5 h-5 text-green-400" />
-                  <div className="text-2xl font-mono font-bold text-green-400">
+                  <TrendingUp className="w-5 h-5 text-up" />
+                  <div className="text-2xl font-mono font-bold text-up">
                     +{stock.pnlPct}%
                   </div>
                 </>
               ) : (
                 <>
-                  <TrendingDown className="w-5 h-5 text-red-400" />
-                  <div className="text-2xl font-mono font-bold text-red-400">
+                  <TrendingDown className="w-5 h-5 text-down" />
+                  <div className="text-2xl font-mono font-bold text-down">
                     {stock.pnlPct}%
                   </div>
                 </>
@@ -112,7 +112,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
               <CardTitle className="text-xs text-fg-3 font-normal">盈亏金额</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-mono font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+              <div className={`text-2xl font-mono font-bold ${isProfit ? 'text-up' : 'text-down'}`}>
                 {isProfit ? '+' : ''}¥{stock.pnlAmount?.toFixed(2) || '0.00'}
               </div>
             </CardContent>
@@ -133,15 +133,15 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
           </div>
 
           <div className="flex items-center gap-2 text-sm">
-            <TrendingUp className="w-4 h-4 text-green-400" />
+            <TrendingUp className="w-4 h-4 text-up" />
             <span className="text-fg-3">最高:</span>
-            <span className="font-mono text-green-400">¥{stock.high?.toFixed(2)}</span>
+            <span className="font-mono text-up">¥{stock.high?.toFixed(2)}</span>
           </div>
 
           <div className="flex items-center gap-2 text-sm">
-            <TrendingDown className="w-4 h-4 text-red-400" />
+            <TrendingDown className="w-4 h-4 text-down" />
             <span className="text-fg-3">最低:</span>
-            <span className="font-mono text-red-400">¥{stock.low?.toFixed(2)}</span>
+            <span className="font-mono text-down">¥{stock.low?.toFixed(2)}</span>
           </div>
         </div>
 
