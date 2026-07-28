@@ -265,7 +265,7 @@ export default function StockPoolPage() {
           <div className="flex items-center gap-3">
             {/* 市场分析入口 */}
             <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/stock-pool/analysis">
+              <Link href="/analysis">
                 <LineChart className="w-4 h-4 mr-2" />
                 市场分析
               </Link>
@@ -273,7 +273,7 @@ export default function StockPoolPage() {
 
             {/* 持仓股入口 */}
             <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/stock-pool/positions">
+              <Link href="/positions">
                 <Wallet className="w-4 h-4 mr-2" />
                 持仓股
               </Link>
@@ -281,7 +281,7 @@ export default function StockPoolPage() {
 
             {/* A股数据总览入口 */}
             <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/stock-pool/ashare">
+              <Link href="/ashare">
                 <Database className="w-4 h-4 mr-2" />
                 A股总览
               </Link>

@@ -156,7 +156,7 @@ export function Header() {
     >
       {/* 左：logo */}
       <div className="flex min-w-0 flex-1 items-center">
-        <Link href="/stock" className="flex flex-none items-center">
+        <Link href="/dashboard" className="flex flex-none items-center">
           <Logo size={24} />
         </Link>
       </div>

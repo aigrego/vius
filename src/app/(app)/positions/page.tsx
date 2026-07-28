@@ -193,7 +193,7 @@ export default function PositionsPage() {
           <div className="flex items-center gap-3">
             {/* 股票池入口 */}
             <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/stock-pool">
+              <Link href="/pool">
                 <ListChecks className="w-4 h-4 mr-2" />
                 股票池
               </Link>
@@ -201,7 +201,7 @@ export default function PositionsPage() {
 
             {/* A股数据总览入口 */}
             <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/stock-pool/ashare">
+              <Link href="/ashare">
                 <Database className="w-4 h-4 mr-2" />
                 A股总览
               </Link>

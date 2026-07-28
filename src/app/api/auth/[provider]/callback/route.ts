@@ -81,7 +81,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: s
     if (profile.email) await upsertOAuthEmail(u.id, profile.email, p);
 
     const c = await createSessionCookie(u);
-    const res = NextResponse.redirect(new URL('/stock', req.url), 302);
+    const res = NextResponse.redirect(new URL('/dashboard', req.url), 302);
     res.cookies.set(c.name, c.value, c.options);
     return res;
   } catch (e) {

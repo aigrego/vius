@@ -4,7 +4,7 @@ import dayjs from "@/utils/dayjs";
 import useSWR from "swr";
 import { Loading } from "@/components/Icons";
 import http from "@/utils/http";
-import { TRealData } from "../type";
+import { TRealData } from "../../dashboard/type";
 import { StockChips } from "@/components/stock-pool/stock-chips";
 import { StockNews } from "@/components/stock-pool/stock-news";
 

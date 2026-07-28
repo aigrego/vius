@@ -57,7 +57,7 @@ function LoginForm() {
         return;
       }
       // cookie 已种下；整页跳转保证整棵 (app) 树带着新会话重新挂载。
-      window.location.href = '/stock';
+      window.location.href = '/dashboard';
     } catch {
       setError('网络异常，请重试');
       setBusy(false);

@@ -282,13 +282,13 @@ export default function AshareOverviewPage() {
 
           <div className="flex items-center gap-3">
             <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/stock-pool/analysis">
+              <Link href="/analysis">
                 <LineChart className="w-4 h-4 mr-2" />
                 市场分析
               </Link>
             </Button>
             <Button variant="secondary" size="sm" asChild>
-              <Link href="/stock-pool">
+              <Link href="/pool">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 返回股票池
               </Link>

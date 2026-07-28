@@ -194,17 +194,20 @@ export default function Overview() {
                                     >
                                         {showPnl ? <Eye size={13} /> : <EyeOff size={13} />}
                                     </button>
-                                    {/* 第一行：当日涨跌 */}
-                                    <div className={`flex flex-row gap-2 text-sm font-semibold ${trendColor(p.change)}`}>
-                                        <span>{StockFormat.trend(p.change)}</span>
-                                        <span>{StockFormat.rate(p.changePct / 100)}</span>
-                                    </div>
-                                    {/* 第二行：名称 + 代码 */}
+                                    {/* 第一行：名称 + 代码 */}
                                     <div className="flex flex-row items-baseline gap-2">
                                         <span className="text-sm">{p.name}</span>
                                         <span className="text-xs font-mono text-fg-3">{p.code}</span>
                                     </div>
-                                    {/* 第三行：成本/盈亏（默认打码）+ 资讯 */}
+                                    {/* 第二行：当日涨跌 + 资讯 */}
+                                    <div className="flex flex-row items-center gap-2">
+                                        <div className={`flex flex-row gap-2 text-sm font-semibold ${trendColor(p.change)}`}>
+                                            <span>{StockFormat.trend(p.change)}</span>
+                                            <span>{StockFormat.rate(p.changePct / 100)}</span>
+                                        </div>
+                                        <Badge tone="blue">资讯 {p.newsCount ?? 0}</Badge>
+                                    </div>
+                                    {/* 第三行：成本/盈亏（默认打码，眼睛图标切换） */}
                                     <div className="flex flex-row items-center gap-2 text-xs text-fg-3">
                                         {showPnl ? (
                                             <>
@@ -216,7 +219,6 @@ export default function Overview() {
                                         ) : (
                                             <span>成本 *** 盈亏 ***</span>
                                         )}
-                                        <Badge tone="blue">资讯 {p.newsCount ?? 0}</Badge>
                                     </div>
                                 </div>
                             );
@@ -238,22 +240,24 @@ export default function Overview() {
                                 onClick={() => openDetail(watchToDetail(w))}
                                 className="cursor-pointer rounded-lg w-full flex flex-col shadow gap-1 py-3 px-3 justify-center items-center bg-surface"
                             >
-                                {/* 第一行：当日涨跌 */}
-                                <div className={`flex flex-row gap-2 text-sm font-semibold ${trendColor(w.change)}`}>
-                                    <span>{StockFormat.trend(w.change)}</span>
-                                    <span>{StockFormat.rate(w.changePct / 100)}</span>
-                                </div>
-                                {/* 第二行：名称 + 代码 */}
+                                {/* 第一行：名称 + 代码 */}
                                 <div className="flex flex-row items-baseline gap-2">
                                     <span className="text-sm">{w.name}</span>
                                     <span className="text-xs font-mono text-fg-3">{w.code}</span>
                                 </div>
-                                {/* 第三行：关注后涨跌额/比例 + 资讯 */}
+                                {/* 第二行：当日涨跌 + 资讯 */}
+                                <div className="flex flex-row items-center gap-2">
+                                    <div className={`flex flex-row gap-2 text-sm font-semibold ${trendColor(w.change)}`}>
+                                        <span>{StockFormat.trend(w.change)}</span>
+                                        <span>{StockFormat.rate(w.changePct / 100)}</span>
+                                    </div>
+                                    <Badge tone="blue">资讯 {w.newsCount ?? 0}</Badge>
+                                </div>
+                                {/* 第三行：关注后涨跌额/比例 */}
                                 <div className="flex flex-row items-center gap-2 text-xs text-fg-3">
                                     <span className={trendColor(w.sinceChange ?? 0)}>
                                         关注后 {StockFormat.trend(w.sinceChange ?? 0)} {StockFormat.rate(w.sincePct / 100)}
                                     </span>
-                                    <Badge tone="blue">资讯 {w.newsCount ?? 0}</Badge>
                                 </div>
                             </div>
                         ))}

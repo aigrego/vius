@@ -22,32 +22,33 @@ const NAV_ITEMS: NavEntry[] = [
   {
     icon: <LineChart size={16} />,
     label: '行情总览',
-    href: '/stock',
-    match: (p) => p.startsWith('/stock') && !p.startsWith('/stock-pool'),
+    href: '/dashboard',
+    // /stock/[code] 个股详情页也归属于行情总览
+    match: (p) => p.startsWith('/dashboard') || p.startsWith('/stock'),
   },
   {
     icon: <ListChecks size={16} />,
     label: '股票池',
-    href: '/stock-pool',
-    match: (p) => p === '/stock-pool',
+    href: '/pool',
+    match: (p) => p === '/pool',
   },
   {
     icon: <Wallet size={16} />,
     label: '持仓股',
-    href: '/stock-pool/positions',
-    match: (p) => p.startsWith('/stock-pool/positions'),
+    href: '/positions',
+    match: (p) => p.startsWith('/positions'),
   },
   {
     icon: <LayoutGrid size={16} />,
     label: 'A股总览',
-    href: '/stock-pool/ashare',
-    match: (p) => p.startsWith('/stock-pool/ashare'),
+    href: '/ashare',
+    match: (p) => p.startsWith('/ashare'),
   },
   {
     icon: <Activity size={16} />,
     label: '放量信号',
-    href: '/stock-pool/analysis',
-    match: (p) => p.startsWith('/stock-pool/analysis'),
+    href: '/analysis',
+    match: (p) => p.startsWith('/analysis'),
   },
 ];
 
