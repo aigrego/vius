@@ -3,10 +3,10 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, KeyRound, LayoutGrid, LineChart, ListChecks, Settings } from 'lucide-react';
+import { Activity, KeyRound, LayoutGrid, LineChart, ListChecks, Settings, Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-/* 左侧 244px 导航栏：行情总览 / 股票池 / A股总览 / 放量信号，
+/* 左侧 244px 导航栏：行情总览 / 股票池 / 持仓股 / A股总览 / 放量信号，
    底部固定「Agent 接入 / 设置」入口。
    用 usePathname 高亮当前项（选中态为品牌色淡底 + 品牌色文字）。 */
 
@@ -30,6 +30,12 @@ const NAV_ITEMS: NavEntry[] = [
     label: '股票池',
     href: '/stock-pool',
     match: (p) => p === '/stock-pool',
+  },
+  {
+    icon: <Wallet size={16} />,
+    label: '持仓股',
+    href: '/stock-pool/positions',
+    match: (p) => p.startsWith('/stock-pool/positions'),
   },
   {
     icon: <LayoutGrid size={16} />,

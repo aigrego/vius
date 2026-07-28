@@ -7,10 +7,11 @@
 `vius`（观微）是一个 A 股行情同步、多维分析与持仓监控工具，自 `orioles-service` 的 stock/stock-pool 功能抽离而来。功能：
 
 - **行情总览**（`/stock`）：指数卡片、华尔街见闻/选股宝快讯流、行业/涨跌板块（快讯流前端直连第三方公开 API；行情快照与板块排行已改为服务端代理 `/api/stocks/real`、`/api/stocks/plates-qq`——wallstcn api-ddc 已下线、腾讯接口无 CORS 头）
-- **股票池**（`/stock-pool`）：自选股/持仓管理、实时盈亏、阈值告警（飞书 webhook 推送）、审计日志；**按账号隔离**，每人一个独立池子（`watchlist.user_id`）
+- **股票池**（`/stock-pool`）：自选关注股管理、实时行情、阈值告警（飞书 webhook 推送）、审计日志；**按账号隔离**，每人一个独立池子（`watchlist.user_id`）；**新建只需填股票代码**，名称/市场/类型由服务端自动解析（`src/lib/stock-resolver.ts`：stock_basic 优先，实时行情三源兜底）
+- **持仓股**（`/stock-pool/positions`）：买入持仓管理，添加填 股票代码+买入价+买入数量；同一股票允许多条持仓记录（`position` 表，按 `user_id` 隔离，无唯一约束）；页面实时合并行情算浮动盈亏
 - **A股总览**（`/stock-pool/ashare`）：全市场 4900+ 股票清单/日线统计、手动触发同步、股票检索、快讯流
 - **放量信号**（`/stock-pool/analysis`）：每日收盘后自动计算的底部/顶部放量信号
-- **个股详情**：股票池/A股总览/放量信号的行点击开 `components/stock-pool/stock-detail-modal` 弹窗（K线走势=选股宝图表组件、筹码分布、相关资讯）；`/stock/[code]` 统一详情页 = 实时主要指标（`/api/stocks/real`）+ 同款选股宝图表 + 筹码分布/相关资讯区块（后两者仅 A 股）
+- **个股详情**：股票池/持仓股/A股总览/放量信号的行点击开 `components/stock-pool/stock-detail-modal` 弹窗（K线走势=选股宝图表组件、筹码分布、相关资讯）；`/stock/[code]` 统一详情页 = 实时主要指标（`/api/stocks/real`）+ 同款选股宝图表 + 筹码分布/相关资讯区块（后两者仅 A 股）
 
 ## 技术栈
 
@@ -42,7 +43,7 @@ src/
 │   ├── (auth)/login/          # 登录页（无 shell）
 │   ├── (app)/                 # 主应用路由组：layout = AuthGate + AppShell
 │   │   ├── stock/             # 行情总览 + [code] 个股详情
-│   │   ├── stock-pool/        # 股票池 + analysis/ 信号 + ashare/ A股总览
+│   │   ├── stock-pool/        # 股票池 + positions/ 持仓股 + analysis/ 信号 + ashare/ A股总览
 │   │   ├── profile/           # 个人资料（资料/安全：多邮箱、改密、OAuth 绑定）
 │   │   ├── settings/          # 设置（主题真实生效，其余偏好 localStorage 占位）
 │   │   ├── agent/             # Agent 接入（占位页）
@@ -53,7 +54,7 @@ src/
 │   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates-qq/ 腾讯板块代理
 │   ├── api/ashare/            # A股数据 API（stocks/daily/chips/news/signals/stats/sync）
 │   │   └── （注意路径：stock-pool 的 API 在 src/app/stock-pool/api/，与页面同目录）
-│   └── stock-pool/api/        # 自选股/实时/统计/告警 API
+│   └── stock-pool/api/        # 自选股/持仓(positions)/实时/统计/告警 API
 ├── components/
 │   ├── ui/                    # 基础组件（原生实现，含 switch）
 │   ├── stock-pool/            # 个股详情弹窗、K线（选股宝 iframe）、筹码、资讯
@@ -64,6 +65,7 @@ src/
 │   ├── session.ts / env.ts / password.ts     # 认证三件套
 │   ├── prisma.ts                              # 单例（默认导出 + 具名导出共存）
 │   ├── realtime.ts / eastmoney.ts             # 实时行情三源降级 / 东财采集（多镜像 + 腾讯兜底）
+│   ├── stock-resolver.ts                      # 代码→名称/市场/类型 自动解析（stock_basic 优先，行情兜底）
 │   ├── technical.ts / alerts.ts / feishu.ts   # 指标计算 / 告警判定 / 飞书推送
 │   ├── scheduler.ts                           # node-cron 调度
 │   ├── jobs/                                  # sync-daily / sync-news / check-alerts
@@ -82,6 +84,7 @@ src/
   - `/stock-pool/api/*`：`{success:true, data}` / `{success:false, error}`
 - **鉴权**：API 内 `requireUser()`（抛 `UnauthorizedError` → 各路由按自家信封返回 401）；`POST /api/ashare/sync` 额外支持 `Authorization: Bearer $CRON_SECRET`。middleware 只查 cookie 存在性，真正校验在 API 层
 - **股票池按账号隔离**：`watchlist.user_id`（`@@unique([userId, code])`，级联删除）；`/stock-pool/api/*` 全部按 `session.uid` 过滤；告警历史 `alert_history.user_id` 可空（存量为 null）。定时告警走 `runAlertCheckAll()` 按用户分组跑、飞书推送标题带归属用户名；手动「检查预警」只查当前用户
+- **持仓股**：`position` 表按 `user_id` 隔离，**同一 (userId, code) 允许多条**（买入价/数量不同）；新增走 `POST /stock-pool/api/positions`（code+price+quantity，名称/市场自动解析）；持仓实时行情走 `/stock-pool/api/positions/realtime`（与股票池 realtime 独立的 3s TTL 缓存）
 - **多邮箱**：`user_emails` 表（全局唯一、小写、source=manual/feishu/lark）；任一邮箱可登录（login 路由先查 username 再查邮箱）；OAuth 回调把带回的邮箱落表；老用户 username 是邮箱时 GET /api/auth/profile 惰性回填主邮箱
 - **OAuth bind 模式**：已登录用户访问 `/api/auth/<provider>/login` 时 state='bind'，回调把 unionId 绑到当前账号（被他人占用跳 `/profile?tab=security&error=bind`）；解绑走 `POST /api/auth/profile/unbind-oauth`（无密码账号拒绝）
 - **Next 16**：动态路由 `params` 是 Promise，必须 `await ctx.params`

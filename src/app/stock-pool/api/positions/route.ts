@@ -6,7 +6,7 @@ import prisma from '@/lib/prisma';
 // 股票代码格式（会被拼进外部行情 URL，必须严格校验）
 const CODE_PATTERN = /^[0-9A-Za-z.]{1,12}$/;
 
-// GET /api/stocks - 获取当前用户的股票池（按账号隔离）
+// GET /api/positions - 获取当前用户的持仓记录（按账号隔离，同一股票可多条）
 export async function GET() {
   try {
     let session;
@@ -22,21 +22,21 @@ export async function GET() {
       throw e;
     }
 
-    const stocks = await prisma.watchlist.findMany({
+    const positions = await prisma.position.findMany({
       where: { userId: session.uid },
       orderBy: { createdAt: 'desc' }
     });
 
-    // 解析 alertsJson
-    const parsedStocks = stocks.map(stock => ({
-      ...stock,
-      alerts: JSON.parse(stock.alertsJson || '{}')
+    // Decimal 序列化为字符串，统一转成 number 方便前端直接计算
+    const data = positions.map(p => ({
+      ...p,
+      price: Number(p.price)
     }));
 
-    return NextResponse.json({ success: true, data: parsedStocks });
+    return NextResponse.json({ success: true, data });
 
   } catch (error) {
-    console.error('Database error:', error);
+    console.error('Get positions error:', error);
     return NextResponse.json(
       { success: false, error: 'Database error' },
       { status: 500 }
@@ -44,7 +44,7 @@ export async function GET() {
   }
 }
 
-// POST /api/stocks - 创建股票（只需 code，名称/市场/类型由服务端自动解析）
+// POST /api/positions - 新增持仓记录（code + 买入价 + 买入数量，名称/市场自动解析）
 export async function POST(request: Request) {
   try {
     let session;
@@ -61,10 +61,9 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
+    const { code, price, quantity } = body;
 
-    const { code, alerts } = body;
-
-    if (!code) {
+    if (!code || price === undefined || quantity === undefined) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
         { status: 400 }
@@ -78,7 +77,22 @@ export async function POST(request: Request) {
       );
     }
 
-    // 自动解析名称/市场/类型（stock_basic 优先，实时行情兜底）
+    const priceNum = Number(price);
+    const quantityNum = Number(quantity);
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      return NextResponse.json(
+        { success: false, error: '买入价必须大于 0' },
+        { status: 400 }
+      );
+    }
+    if (!Number.isInteger(quantityNum) || quantityNum <= 0) {
+      return NextResponse.json(
+        { success: false, error: '买入数量必须为正整数' },
+        { status: 400 }
+      );
+    }
+
+    // 自动解析名称/市场（stock_basic 优先，实时行情兜底）
     const resolved = await resolveStock(code);
     if (!resolved) {
       return NextResponse.json(
@@ -90,23 +104,22 @@ export async function POST(request: Request) {
     const agentId = session.username || 'web-ui';
 
     // 写操作与审计日志包在同一事务中
-    const [stock] = await prisma.$transaction([
-      prisma.watchlist.create({
+    const [position] = await prisma.$transaction([
+      prisma.position.create({
         data: {
           userId: session.uid,
           code,
           name: resolved.name,
           market: resolved.market,
-          type: resolved.type,
-          cost: 0,
-          alertsJson: JSON.stringify(alerts || {})
+          price: priceNum,
+          quantity: quantityNum
         }
       }),
       prisma.auditLog.create({
         data: {
           action: 'CREATE',
           code,
-          details: `Created stock: ${resolved.name} (${code})`,
+          details: `Created position: ${resolved.name} (${code}) ${quantityNum}股 @ ${priceNum}`,
           agentId
         }
       })
@@ -114,19 +127,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      data: { ...stock, alerts: JSON.parse(stock.alertsJson) }
+      data: { ...position, price: Number(position.price) }
     });
 
-  } catch (error: any) {
-    console.error('Create stock error:', error);
-    if (error.code === 'P2002') {
-      return NextResponse.json(
-        { success: false, error: 'Stock code already exists' },
-        { status: 409 }
-      );
-    }
+  } catch (error) {
+    console.error('Create position error:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to create stock' },
+      { success: false, error: 'Failed to create position' },
       { status: 500 }
     );
   }

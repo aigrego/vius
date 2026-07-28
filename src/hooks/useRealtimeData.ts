@@ -30,10 +30,11 @@ interface RealtimeMeta {
 interface UseRealtimeOptions {
   interval?: number;  // 轮询间隔，默认 5000ms
   enabled?: boolean;  // 是否启用，默认 true
+  url?: string;       // 行情接口，默认股票池实时行情
 }
 
 export function useRealtimeData(options: UseRealtimeOptions = {}) {
-  const { interval = 5000, enabled = true } = options;
+  const { interval = 5000, enabled = true, url = '/stock-pool/api/realtime' } = options;
   
   const [data, setData] = useState<Record<string, RealtimeStock>>({});
   const [meta, setMeta] = useState<RealtimeMeta | null>(null);
@@ -43,7 +44,7 @@ export function useRealtimeData(options: UseRealtimeOptions = {}) {
 
   const fetchData = useCallback(async () => {
     try {
-      const response = await fetch('/stock-pool/api/realtime');
+      const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch');
       
       const result = await response.json();
@@ -59,7 +60,7 @@ export function useRealtimeData(options: UseRealtimeOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [url]);
 
   useEffect(() => {
     if (!enabled) return;

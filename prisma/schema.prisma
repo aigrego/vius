@@ -19,6 +19,7 @@ model User {
   createdAt    DateTime    @default(now()) @map("created_at")
   emails       UserEmail[]
   watchlists   Watchlist[]
+  positions    Position[]
 
   @@map("users")
 }
@@ -70,6 +71,23 @@ model Watchlist {
 
   @@unique([userId, code])
   @@map("watchlist")
+}
+
+// 持仓记录（按用户隔离；同一股票允许多条买入价/数量不同的持仓记录）
+model Position {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  code      String   @db.VarChar(20)
+  name      String   @db.VarChar(100)
+  market    String   @db.VarChar(10)
+  price     Decimal  @db.Decimal(10, 4) // 买入价
+  quantity  Int // 买入数量（股）
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, code])
+  @@map("position")
 }
 
 // 审计日志

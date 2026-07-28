@@ -136,7 +136,8 @@ export default function StockPoolPage() {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        // 新建只需 code（名称/市场/类型由服务端自动解析）；编辑走全量表单
+        body: JSON.stringify(editingStock ? formData : { code: formData.code, alerts: formData.alerts })
       });
 
       if (res.ok) {
@@ -267,6 +268,14 @@ export default function StockPoolPage() {
               <Link href="/stock-pool/analysis">
                 <LineChart className="w-4 h-4 mr-2" />
                 市场分析
+              </Link>
+            </Button>
+
+            {/* 持仓股入口 */}
+            <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
+              <Link href="/stock-pool/positions">
+                <Wallet className="w-4 h-4 mr-2" />
+                持仓股
               </Link>
             </Button>
 
@@ -538,7 +547,8 @@ export default function StockPoolPage() {
         <DialogContent className="bg-surface border-border p-6">
           <div className="text-[15px] font-semibold">{editingStock ? '编辑股票' : '添加股票'}</div>
           <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            {/* 新建只填代码，名称/市场/类型由服务端自动解析；编辑保留完整表单 */}
+            <div className={editingStock ? 'grid grid-cols-2 gap-4' : ''}>
               <div className="space-y-2">
                 <label className="text-sm text-fg-3">股票代码</label>
                 <Input
@@ -547,63 +557,72 @@ export default function StockPoolPage() {
                   placeholder="如: 600519"
                   disabled={!!editingStock}
                 />
+                {!editingStock && (
+                  <p className="text-xs text-fg-3">名称、市场、类型将自动识别</p>
+                )}
               </div>
-              <div className="space-y-2">
-                <label className="text-sm text-fg-3">股票名称</label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="如: 贵州茅台"
-                />
-              </div>
+              {editingStock && (
+                <div className="space-y-2">
+                  <label className="text-sm text-fg-3">股票名称</label>
+                  <Input
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="如: 贵州茅台"
+                  />
+                </div>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm text-fg-3">市场</label>
-                <Select
-                  value={formData.market}
-                  onValueChange={(v) => setFormData({ ...formData, market: v as MarketType })}
-                >
-                  <SelectTrigger />
-                  <SelectContent>
-                    <SelectItem value="sh">上证</SelectItem>
-                    <SelectItem value="sz">深证</SelectItem>
-                    <SelectItem value="hk">港股</SelectItem>
-                    <SelectItem value="us">美股</SelectItem>
-                    <SelectItem value="bj">北交所</SelectItem>
-                    <SelectItem value="fx">外汇</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm text-fg-3">类型</label>
-                <Select
-                  value={formData.type}
-                  onValueChange={(v) => setFormData({ ...formData, type: v as StockType })}
-                >
-                  <SelectTrigger />
-                  <SelectContent>
-                    <SelectItem value="individual">个股</SelectItem>
-                    <SelectItem value="etf">ETF</SelectItem>
-                    <SelectItem value="gold">黄金</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fg-3">持仓成本</label>
-              <Input
-                type="number"
-                step="0.001"
-                value={formData.cost}
-                onChange={(e) => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })}
-                placeholder="0.000"
-              />
-            </div>
+            {editingStock && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm text-fg-3">市场</label>
+                    <Select
+                      value={formData.market}
+                      onValueChange={(v) => setFormData({ ...formData, market: v as MarketType })}
+                    >
+                      <SelectTrigger />
+                      <SelectContent>
+                        <SelectItem value="sh">上证</SelectItem>
+                        <SelectItem value="sz">深证</SelectItem>
+                        <SelectItem value="hk">港股</SelectItem>
+                        <SelectItem value="us">美股</SelectItem>
+                        <SelectItem value="bj">北交所</SelectItem>
+                        <SelectItem value="fx">外汇</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fg-3">类型</label>
+                    <Select
+                      value={formData.type}
+                      onValueChange={(v) => setFormData({ ...formData, type: v as StockType })}
+                    >
+                      <SelectTrigger />
+                      <SelectContent>
+                        <SelectItem value="individual">个股</SelectItem>
+                        <SelectItem value="etf">ETF</SelectItem>
+                        <SelectItem value="gold">黄金</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-fg-3">持仓成本</label>
+                  <Input
+                    type="number"
+                    step="0.001"
+                    value={formData.cost}
+                    onChange={(e) => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })}
+                    placeholder="0.000"
+                  />
+                </div>
+              </>
+            )}
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setDialogOpen(false)}>取消</Button>
-            <Button onClick={handleSave}>{editingStock ? '保存' : '添加'}</Button>
+            <Button onClick={handleSave} disabled={!formData.code}>{editingStock ? '保存' : '添加'}</Button>
           </div>
         </DialogContent>
       </Dialog>
