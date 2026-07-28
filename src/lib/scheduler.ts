@@ -13,6 +13,7 @@ import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
 import { runAlertCheckAll } from '@/lib/jobs/check-alerts';
 import { syncNews } from '@/lib/jobs/sync-news';
 import { syncLhb } from '@/lib/jobs/sync-lhb';
+import { syncPlates } from '@/lib/jobs/sync-plates';
 
 /* ---------- 任务定义 ---------- */
 
@@ -119,6 +120,17 @@ async function runSyncLhb(): Promise<void> {
   }
 }
 
+async function runSyncPlates(): Promise<void> {
+  try {
+    const result = await syncPlates();
+    if (result.refreshed.length > 0 || result.failed.length > 0) {
+      console.log(`[scheduler] syncPlates finished: ${JSON.stringify(result)}`);
+    }
+  } catch (error) {
+    console.error('[scheduler] syncPlates failed:', error);
+  }
+}
+
 // 任务注册表：id 即 cron_job / cron_run 表里的外键
 export const JOBS: JobDef[] = [
   {
@@ -151,6 +163,14 @@ export const JOBS: JobDef[] = [
     cron: '30 17 * * 1-5',
     timezone: 'Asia/Shanghai',
     handler: runSyncLhb,
+  },
+  {
+    id: 'sync-plates',
+    name: '板块行情缓存',
+    description: '行业/题材/板块涨跌幅榜写 plate_cache（每分钟，函数内卡 9:30-15:00）',
+    cron: '* 9-15 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    handler: runSyncPlates,
   },
 ];
 

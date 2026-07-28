@@ -28,7 +28,15 @@ export default function StockPage() {
                             行业板块
                             <TrendingUp className="inline w-4 h-4 text-up ml-2" />
                         </div>
-                        <QQPlates />
+                        <QQPlates board="hy" />
+                    </div>
+
+                    <div className="bg-surface rounded-2xl shadow p-4">
+                        <div className="mb-2 text-fg-1">
+                            题材板块
+                            <TrendingUp className="inline w-4 h-4 text-up ml-2" />
+                        </div>
+                        <QQPlates board="gn" />
                     </div>
 
                     <div className="bg-surface rounded-2xl shadow p-4">

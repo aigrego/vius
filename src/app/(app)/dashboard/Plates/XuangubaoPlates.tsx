@@ -3,31 +3,18 @@
 import useSWR from 'swr'
 import Skeleton from '@/components/Skeleton'
 import http from '@/utils/http'
-import { StockPlatesProps, TXuangubaoPlate, TXuangubaoPlates } from '../type'
+import { StockPlatesProps, TXuangubaoPlate } from '../type'
 
+/* 选股宝板块涨/跌幅榜（is_acs=true 涨幅榜）。
+   数据读服务端 plate_cache（/api/stocks/plates，定时任务预热，已在服务端排序取前 N），
+   不再前端直连 flash-api。 */
 export default function XuangubaoPlates({ limit, is_acs }: StockPlatesProps) {
 
-    const data_fields = [
-        'plate_id',
-        'plate_name',
-        'fund_flow',
-        'rise_count',
-        'fall_count',
-        'stay_count',
-        'limit_up_count',
-        'core_avg_pcp',
-        'core_avg_pcp_rank',
-        'core_avg_pcp_rank_change',
-        'top_n_stocks',
-        'is_new',
-    ]
-
-    const rank_field = "core_avg_pcp"
-    const rank_type = "0"
-
-    const { data: rankResp } = useSWR(`https://flash-api.xuangubao.cn/api/plate/rank?field=${rank_field}&type=${rank_type}`, http.getAll, { refreshInterval: 10000 })
-
-    const { data = { data: [] } } = useSWR<TXuangubaoPlates>(rankResp ? `https://flash-api.xuangubao.cn/api/plate/data?plates=${(is_acs ? rankResp.data.slice(0, limit) : rankResp.data.slice(-limit)).join(',')}&fields=${data_fields.join(',')}` : null, http.getAll, { refreshInterval: 10000 })
+    const { data = { data: [] } } = useSWR<{ data: TXuangubaoPlate[] }>(
+        `/api/stocks/plates?kind=${is_acs ? 'xgb_rise' : 'xgb_fall'}`,
+        http.getAll,
+        { refreshInterval: 10000 }
+    )
 
     const getColor = (num: number) => {
         // 涨跌色随设置页「涨跌配色」翻转（--up/--down，默认红涨绿跌）
@@ -41,12 +28,12 @@ export default function XuangubaoPlates({ limit, is_acs }: StockPlatesProps) {
         return num.toFixed(2)
     }
 
-    const sort = (a: TXuangubaoPlate, b: TXuangubaoPlate) => is_acs ? b.core_avg_pcp - a.core_avg_pcp : a.core_avg_pcp - b.core_avg_pcp
+    const plates = data.data.slice(0, limit)
 
     return (
         <div className="grid grid-cols-3 gap-1 w-full text-white">
             {
-                data.data.length === 0 ? [...Array.from(Array(limit).keys())].map(i => <Skeleton key={i} className="w-full rounded-sm h-20" />) : Object.values(data.data).sort(sort).map((item) => (
+                plates.length === 0 ? [...Array.from(Array(limit).keys())].map(i => <Skeleton key={i} className="w-full rounded-sm h-20" />) : plates.map((item) => (
                     <div key={item.plate_id} className={`rounded-sm cursor-pointer w-full flex flex-col gap-1 py-4 justify-center items-center ${getColor(item.core_avg_pcp)}`}>
                         <span className='text-xs'>{item.plate_name}</span>
                         <span className=''>{format(item.core_avg_pcp * 100)}%</span>

@@ -6,7 +6,7 @@
 
 `vius`（观微）是一个 A 股行情同步、多维分析与持仓监控工具，自 `orioles-service` 的 stock/stock-pool 功能抽离而来。功能：
 
-- **行情总览**（`/dashboard`）：三排卡片（指数 / 持仓股汇总 / 股票池，**持仓/股票池排有数据才显示**）+ 三列区块（左=A股涨幅排行 `AshareRank`、中=合并快讯流 `NewsFeed`、右=行业/涨跌板块）。三排卡片走 `/api/stocks/overview`；**快讯流与涨幅排行均查库**（`/api/ashare/news`、`/api/ashare/rank`），不再前端直连第三方；板块排行为服务端代理 `/api/stocks/plates-qq` + 选股宝板块接口
+- **行情总览**（`/dashboard`）：三排卡片（指数 / 持仓股汇总 / 股票池，**持仓/股票池排有数据才显示**）+ 三列区块（左=A股涨幅排行 `AshareRank`、中=合并快讯流 `NewsFeed`、右=行业/题材/板块涨跌幅榜）。三排卡片走 `/api/stocks/overview`；**快讯流与涨幅排行均查库**（`/api/ashare/news`、`/api/ashare/rank`），不再前端直连第三方；**板块卡片走 `/api/stocks/plates?kind=` 读 `plate_cache`**（sync-plates 定时任务交易时段每分钟预热，冷启动回源兜底）
 - **股票池**（`/pool`）：自选关注股管理、实时行情、阈值告警（飞书 webhook 推送）、审计日志；**按账号隔离**，每人一个独立池子（`watchlist.user_id`）；**新建只需填股票代码**，名称/市场/类型由服务端自动解析（`src/lib/stock-resolver.ts`：stock_basic 优先，实时行情三源兜底）
 - **持仓股**（`/positions`）：买入持仓管理，添加填 股票代码+买入价+买入数量；同一股票允许多条持仓记录（`position` 表，按 `user_id` 隔离，无唯一约束）；页面实时合并行情算浮动盈亏
 - **A股总览**（`/ashare`）：全市场 4900+ 股票清单/日线统计、手动触发同步、股票检索、快讯流
@@ -59,7 +59,7 @@ src/
 │   ├── icon.svg               # 站点 favicon（放大镜 + 行情脉冲线，同 components/Logo.tsx）
 │   ├── api/auth/              # login/logout/session/[provider]/login/callback
 │   │   └── profile/           # 资料/改密/多邮箱 emails(+primary)/解绑 unbind-oauth
-│   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates-qq/ 腾讯板块代理 + overview/ 总览三排卡片
+│   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates/ 板块缓存（读 plate_cache）+ overview/ 总览三排卡片
 │   ├── api/cron/              # 定时任务管理 API（admin 专属，require-admin.ts 鉴权）
 │   ├── api/news/              # 资讯管理 API（manage/* 为 admin 数据源管理）
 │   ├── api/lhb/               # 龙虎榜 API（列表/seats；manage/* 为 admin 数据源管理）
@@ -80,7 +80,7 @@ src/
 │   ├── stock-resolver.ts                      # 代码→名称/市场/类型 自动解析（stock_basic 优先，行情兜底）
 │   ├── technical.ts / alerts.ts / feishu.ts   # 指标计算 / 告警判定 / 飞书推送
 │   ├── scheduler.ts                           # node-cron 调度（JOBS 注册表 + reschedule/trigger/listJobs + cron_run 运行记录）
-│   ├── jobs/                                  # sync-daily / sync-news / sync-lhb / check-alerts
+│   ├── jobs/                                  # sync-daily / sync-news / sync-lhb / sync-plates / check-alerts
 │   └── analysis/                              # volume-signals / chip-distribution
 ├── server/lark.ts             # 飞书/Lark OAuth
 ├── server/user-emails.ts      # 多邮箱辅助（回填/OAuth 邮箱落表/格式校验）
@@ -103,7 +103,7 @@ src/
 - **页面路由**（2026-07 改名）：`/dashboard` 行情总览、`/pool` 股票池、`/positions` 持仓股、`/ashare` A股总览、`/analysis` 放量信号；`/stock/[code]` 详情页保留不动；旧路径由 `next.config.ts` 的 redirects 做 307 兼容跳转；`/stock-pool/api/*` 接口路径未动
 - **涨跌配色**：行情涨跌一律用语义类 `text-up`/`text-down`/`bg-up`/`bg-down`/`border-up`/`border-down`（`globals.css` 的 `--up`/`--down` 运行时变量，默认红涨绿跌；`:root[data-up-color='green']` 互换为绿涨红跌）。偏好在设置页「通用-涨跌配色」，存 `localStorage('vius-prefs').upColor`，helper 在 `src/lib/updown.ts`，anti-flash 在 `layout.tsx` 内联脚本；语义红绿（删除/停牌/获利盘等）仍用原 Tailwind 色
 - **行情总览三排卡片**：`GET /api/stocks/overview` 无参只读 `overview_cache` 缓存秒回（indices 全局 `user_id='*'`，positions/watchlist 按用户）；`?refresh=1` 重算+upsert（指数与用户股票各一次批量行情调用）。前端 `dashboard/Overview.tsx`：开页先渲染缓存，再 refresh 更新，之后 10s 轮询。持仓排按 code 汇总（`avgCost=Σ(price×qty)/Σqty`，`pnl=(current−avgCost)×totalQty`）；股票池排「关注后涨跌幅」基于 `watchlist.mark_price`（关注时价格，创建时记录、存量 null 懒回填），「资讯关联」=近 7 天 `news_flash.codes` 匹配条数
-- **定时任务注册表**：`scheduler.ts` 的 `JOBS`（daily-close/intraday-alerts/sync-news/sync-lhb）是唯一任务来源；`cron_job` 表存 cron/enabled 覆盖（仅改过的有行），`cron_run` 表存每次运行记录；运行时改 cron 走 `rescheduleJob()`（validate→destroy 旧 task→重排），手动触发走 `triggerJob()`（进程内 Set 互斥防重入）
+- **定时任务注册表**：`scheduler.ts` 的 `JOBS`（daily-close/intraday-alerts/sync-news/sync-lhb/sync-plates）是唯一任务来源；`cron_job` 表存 cron/enabled 覆盖（仅改过的有行），`cron_run` 表存每次运行记录；运行时改 cron 走 `rescheduleJob()`（validate→destroy 旧 task→重排），手动触发走 `triggerJob()`（进程内 Set 互斥防重入）
 - **注释以中文为主**；路径别名 `@/* → ./src/*`
 - **无测试框架**；`test/*.http` 用 REST Client 手动测
 
@@ -114,6 +114,7 @@ src/
 - **17:30 周一~周五**：sync-lhb（东财 datacenter 龙虎榜个股榜单+席位明细，当日覆盖式落 `lhb_stock`/`lhb_seat`，数据源为 `lhb_source` 中启用项）
 - **盘中每 5 分钟**：check-alerts
 - **每 15 秒**：sync-news（轮询 `news_source` 启用源抓取快讯，抓取同时提取股票关键词/代码判定个股相关度，`codes`+`keywords` 一起落 `news_flash`；进程内防重入）
+- **盘中每分钟**：sync-plates（腾讯行业/题材板块 + 选股宝板块涨/跌幅榜 → `plate_cache`，函数内卡 9:30-15:00；页面 `/api/stocks/plates` 只读库）
 
 手动触发：`POST /api/ashare/sync?type=daily|news|signals|lhb|all`（登录 session 或 `Bearer $CRON_SECRET`）；`codes=` 参数可只回补指定股票历史，`type=lhb` 时 `date=` 可指定日期。admin 也可在 `/cron` 页面手动触发/改 cron/启停（`POST /api/cron/<id>/trigger`、`PUT /api/cron/<id>`）。
 

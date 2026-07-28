@@ -7,10 +7,11 @@ import Skeleton from "@/components/Skeleton"
 import NumberFlow from '@number-flow/react'
 import { NumberFlowFormat } from "@/utils/format"
 
-export default function QQPlates() {
-    // 腾讯板块排行无 CORS 头，改走服务端代理 /api/stocks/plates-qq
+/* 腾讯板块排行（board: hy=行业 / gn=题材）。
+   数据读服务端 plate_cache（/api/stocks/plates，定时任务预热），不再直连第三方。 */
+export default function QQPlates({ board = 'hy' }: { board?: 'hy' | 'gn' }) {
     const { data = { data: { rank_list: [] } } } = useSWR(
-        '/api/stocks/plates-qq',
+        `/api/stocks/plates?kind=qq_${board}`,
         http.getAll,
         {
             refreshInterval: 10000

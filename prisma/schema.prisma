@@ -293,3 +293,12 @@ model LhbSource {
 
   @@map("lhb_source")
 }
+
+// 板块行情缓存（行业/题材/涨幅榜/跌幅榜，sync-plates 定时任务预热，页面只读库）
+model PlateCache {
+  kind      String   @id @db.VarChar(20) // qq_hy / qq_gn / xgb_rise / xgb_fall
+  payload   String   @db.Text // JSON（QQ 为上游原始响应，选股宝为整形后的板块数组）
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@map("plate_cache")
+}
