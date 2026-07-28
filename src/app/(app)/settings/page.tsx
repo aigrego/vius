@@ -4,10 +4,13 @@ import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { SegBtn } from '@/components/ui/segmented';
 import { applyTheme, readThemePref, type ThemePref } from '@/lib/theme';
 import { applyUpColor, type UpColorPref } from '@/lib/updown';
+import { LhbManageTab } from './lhb-manage-tab';
+import { NewsManageTab } from './news-manage-tab';
 
-/* 设置页：偏好。
+/* 设置页：偏好 + 资讯管理/龙虎榜管理（仅 admin 可见/可操作）。
    主题（lib/theme）与涨跌配色（lib/updown）真实生效；语言、时区、语言切换器、
    通知偏好目前无对应体系，持久化在 localStorage('vius-prefs') 仅作占位。 */
 
@@ -67,10 +70,20 @@ function Row({
 export default function SettingsPage() {
   const [theme, setTheme] = React.useState<ThemePref>('light');
   const [prefs, setPrefs] = React.useState<Prefs>(DEFAULT_PREFS);
+  const [tab, setTab] = React.useState<'prefs' | 'lhb' | 'news'>('prefs');
+  const [role, setRole] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setTheme(readThemePref());
     setPrefs(readPrefs());
+    // 「龙虎榜管理」tab 仅 admin 可见（接口侧 requireAdmin 兜底）
+    fetch('/api/auth/session')
+      .then(res => res.json())
+      .then(json => {
+        const user = json?.data?.user ?? json?.user ?? json?.data ?? null;
+        if (user?.role) setRole(user.role);
+      })
+      .catch(() => {});
   }, []);
 
   const updatePrefs = (patch: Partial<Prefs>) => {
@@ -97,11 +110,20 @@ export default function SettingsPage() {
       <p className="mb-5 mt-1 text-[13px] text-fg-3">管理通用偏好、通知与隐私</p>
 
       <div className="mb-5 inline-flex gap-0.5 rounded-lg bg-surface-2 p-1">
-        <span className="inline-flex items-center rounded-md bg-surface px-2 py-[3px] text-[12px] font-medium text-fg-1 shadow-1">
-          偏好
-        </span>
+        <SegBtn active={tab === 'prefs'} onClick={() => setTab('prefs')}>偏好</SegBtn>
+        {role === 'admin' && (
+          <SegBtn active={tab === 'news'} onClick={() => setTab('news')}>资讯管理</SegBtn>
+        )}
+        {role === 'admin' && (
+          <SegBtn active={tab === 'lhb'} onClick={() => setTab('lhb')}>龙虎榜管理</SegBtn>
+        )}
       </div>
 
+      {tab === 'lhb' && role === 'admin' ? (
+        <LhbManageTab />
+      ) : tab === 'news' && role === 'admin' ? (
+        <NewsManageTab />
+      ) : (
       <div className="flex flex-col gap-4">
         <Card>
           <CardHeader>
@@ -180,6 +202,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ export type TNewsFlashInput = {
   title?: string | null;
   content: string;
   codes?: string | null; // 匹配到的股票代码，逗号分隔；无匹配存 NULL
+  keywords?: string | null; // 命中的股票名/代码关键词，逗号分隔
   publishedAt: Date;
 };
 
@@ -19,6 +20,7 @@ export const createNewsFlashes = async (items: TNewsFlashInput[]): Promise<numbe
       title: item.title ?? null,
       content: item.content,
       codes: item.codes ?? null,
+      keywords: item.keywords ?? null,
       publishedAt: item.publishedAt
     })),
     skipDuplicates: true
@@ -70,4 +72,17 @@ export const getRecentNewsWithoutCodes = async (limit: number = 200) => {
     orderBy: { publishedAt: 'desc' },
     take: limit
   });
+};
+
+// 资讯管理页统计：总数 / 已关联个股 / 今日新增（北京时间）/ 最新快讯时间
+export const getNewsFlashManageStats = async () => {
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  const todayStart = new Date(`${todayStr}T00:00:00+08:00`);
+  const [total, matched, todayCount, latest] = await Promise.all([
+    prisma.newsFlash.count(),
+    prisma.newsFlash.count({ where: { codes: { not: null } } }),
+    prisma.newsFlash.count({ where: { publishedAt: { gte: todayStart } } }),
+    prisma.newsFlash.findFirst({ orderBy: { publishedAt: 'desc' }, select: { publishedAt: true } })
+  ]);
+  return { total, matched, todayCount, latestAt: latest?.publishedAt ?? null };
 };

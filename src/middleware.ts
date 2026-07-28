@@ -3,7 +3,7 @@ import { SESSION_COOKIE } from '@/lib/session';
 
 /* 路由守卫：只检查 vius_session cookie 是否存在（真正的校验发生在服务端
    API 内部）。/login 带 cookie 则弹回 /dashboard。另外统一附加安全响应头。 */
-const PROTECTED_PREFIXES = ['/dashboard', '/pool', '/positions', '/ashare', '/analysis', '/stock', '/stock-pool'];
+const PROTECTED_PREFIXES = ['/dashboard', '/pool', '/positions', '/ashare', '/analysis', '/lhb', '/stock', '/stock-pool'];
 
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Frame-Options': 'DENY',

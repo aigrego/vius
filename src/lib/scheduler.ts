@@ -12,6 +12,7 @@ import { syncDailyStocks, getBeijingDateStr } from '@/lib/jobs/sync-daily';
 import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
 import { runAlertCheckAll } from '@/lib/jobs/check-alerts';
 import { syncNews } from '@/lib/jobs/sync-news';
+import { syncLhb } from '@/lib/jobs/sync-lhb';
 
 /* ---------- 任务定义 ---------- */
 
@@ -108,6 +109,16 @@ async function runSyncNews(): Promise<void> {
   }
 }
 
+async function runSyncLhb(): Promise<void> {
+  try {
+    console.log('[scheduler] syncLhb started');
+    const result = await syncLhb();
+    console.log(`[scheduler] syncLhb finished: ${JSON.stringify(result)}`);
+  } catch (error) {
+    console.error('[scheduler] syncLhb failed:', error);
+  }
+}
+
 // 任务注册表：id 即 cron_job / cron_run 表里的外键
 export const JOBS: JobDef[] = [
   {
@@ -129,9 +140,17 @@ export const JOBS: JobDef[] = [
   {
     id: 'sync-news',
     name: '快讯同步',
-    description: '每 30 分钟抓取见闻/选股宝快讯（全天，不敏感于时区）',
-    cron: '*/30 * * * *',
+    description: '每 15 秒轮询启用的资讯源抓取快讯，提取关键词匹配个股落库',
+    cron: '*/15 * * * * *',
     handler: runSyncNews,
+  },
+  {
+    id: 'sync-lhb',
+    name: '龙虎榜同步',
+    description: '东财龙虎榜个股榜单+席位明细（17:30 周一~周五）',
+    cron: '30 17 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    handler: runSyncLhb,
   },
 ];
 

@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import { syncDailyStocks } from '@/lib/jobs/sync-daily';
 import { syncNews } from '@/lib/jobs/sync-news';
+import { syncLhb } from '@/lib/jobs/sync-lhb';
 import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
 import { getLatestDailyDate } from '@/model/StockDaily';
 
 // 声明为动态路由
 export const dynamic = 'force-dynamic';
 
-const VALID_TYPES = ['daily', 'news', 'signals', 'all'];
+const VALID_TYPES = ['daily', 'news', 'signals', 'lhb', 'all'];
 
-// POST /api/ashare/sync?type=daily|news|signals|all - 手动触发同步任务（需登录）
-// type=all 时按 daily → signals 顺序执行（信号依赖当日日线），news 独立执行
+// POST /api/ashare/sync?type=daily|news|signals|lhb|all - 手动触发同步任务（需登录）
+// type=all 时按 daily → signals 顺序执行（信号依赖当日日线），news 独立执行，lhb 不参与 all
 export const POST = async (request: NextRequest) => {
   try {
     // 鉴权：优先 CRON_SECRET（供外部 cron/脚本调用），其次登录 session
@@ -65,6 +66,13 @@ export const POST = async (request: NextRequest) => {
     // 快讯同步（news / all），与前两项相互独立
     if (type === 'news' || type === 'all') {
       result.news = await syncNews();
+    }
+
+    // 龙虎榜同步（lhb）：date=YYYY-MM-DD 可指定日期，缺省为北京当日
+    if (type === 'lhb') {
+      const dateParam = searchParams.get('date')?.trim();
+      const date = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : undefined;
+      result.lhb = await syncLhb(date);
     }
 
     return NextResponse.json({
