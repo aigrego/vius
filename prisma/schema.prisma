@@ -166,7 +166,7 @@ model StockSignal {
   @@map("stock_signal")
 }
 
-// 资讯快讯（定时抓取落库，codes 为关联到的股票代码）
+// 资讯快讯（定时抓取落库，codes 为关联到的股票代码，keywords 为命中的关键词）
 model NewsFlash {
   id          Int      @id @default(autoincrement())
   source      String   @db.VarChar(20) // wallstcn / xuangubao
@@ -174,11 +174,30 @@ model NewsFlash {
   title       String?  @db.VarChar(500)
   content     String
   codes       String? // 匹配到的股票代码，逗号分隔
+  keywords    String? @db.VarChar(500) // 命中的股票名/代码关键词，逗号分隔（相关度判定留痕）
   publishedAt DateTime @map("published_at")
 
   @@unique([source, externalId])
   @@index([publishedAt])
   @@map("news_flash")
+}
+
+// 资讯数据源配置（key 标识解析器；调度走全局 sync-news 任务轮询启用源）
+model NewsSource {
+  id             Int       @id @default(autoincrement())
+  key            String    @unique @db.VarChar(20) // wallstcn / xuangubao
+  name           String    @db.VarChar(50)
+  url            String?   @db.VarChar(255) // 缺省用代码内置地址
+  params         String?   @db.VarChar(255) // 源特定参数（如选股宝 subj_ids）
+  enabled        Boolean   @default(true)
+  lastSyncAt     DateTime? @map("last_sync_at") @db.Timestamp(0)
+  lastSyncStatus String?   @map("last_sync_status") @db.VarChar(10) // success / failed
+  lastSyncCount  Int?      @map("last_sync_count")
+  description    String?   @db.VarChar(255)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@map("news_source")
 }
 
 // 行情总览三排卡片缓存（indices 为全局 userId='*'，positions/watchlist 按用户隔离）
@@ -215,4 +234,62 @@ model CronRun {
 
   @@index([jobId, startedAt])
   @@map("cron_run")
+}
+
+// 龙虎榜个股上榜记录（每日收盘后同步；当日覆盖式写入，故无唯一约束）
+model LhbStock {
+  id         Int      @id @default(autoincrement())
+  code       String   @db.VarChar(10)
+  name       String   @db.VarChar(20)
+  market     String   @db.VarChar(4) // sh / sz / bj
+  date       DateTime @db.Date
+  closePrice Float    @map("close_price")
+  changePct  Float    @map("change_pct")
+  amount     Float // 当日总成交额（元）
+  reason     String   @db.VarChar(200) // 上榜原因
+  changeType String   @map("change_type") @db.VarChar(30)
+  tradeId    String   @map("trade_id") @db.VarChar(20) // 关联席位明细
+  buyAmt     Float    @map("buy_amt")
+  sellAmt    Float    @map("sell_amt")
+  netAmt     Float    @map("net_amt") // 龙虎榜净买入
+
+  @@index([date, market])
+  @@map("lhb_stock")
+}
+
+// 龙虎榜席位明细（买入前五 / 卖出前五）
+model LhbSeat {
+  id        Int      @id @default(autoincrement())
+  code      String   @db.VarChar(10)
+  date      DateTime @db.Date
+  tradeId   String   @map("trade_id") @db.VarChar(20)
+  direction String   @db.VarChar(4) // buy / sell
+  rank      Int // 1-5
+  deptName  String   @map("dept_name") @db.VarChar(100)
+  buy       Float
+  sell      Float
+  net       Float
+
+  @@index([code, date])
+  @@index([date])
+  @@map("lhb_seat")
+}
+
+// 龙虎榜数据源配置（cron 字段仅保存展示，实际调度走全局 sync-lhb 任务）
+model LhbSource {
+  id             Int       @id @default(autoincrement())
+  name           String    @db.VarChar(50)
+  type           String    @default("api") @db.VarChar(10) // api（预留其他类型）
+  url            String?   @db.VarChar(255)
+  apiKey         String?   @map("api_key") @db.VarChar(255)
+  cron           String?   @db.VarChar(50)
+  description    String?   @db.VarChar(255)
+  enabled        Boolean   @default(true)
+  lastSyncAt     DateTime? @map("last_sync_at") @db.Timestamp(0)
+  lastSyncStatus String?   @map("last_sync_status") @db.VarChar(10) // success / failed
+  lastSyncCount  Int?      @map("last_sync_count")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@map("lhb_source")
 }
