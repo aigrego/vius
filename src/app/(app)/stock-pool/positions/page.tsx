@@ -23,7 +23,7 @@ import { useRealtimeData } from '@/hooks/useRealtimeData';
 import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
 import {
   Plus, Search, RefreshCw, TrendingUp, Wallet, BarChart3, ListChecks,
-  Trash2, Activity, Clock, Database
+  Edit2, Trash2, Activity, Clock, Database
 } from 'lucide-react';
 
 export default function PositionsPage() {
@@ -32,6 +32,7 @@ export default function PositionsPage() {
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editingPosition, setEditingPosition] = useState<Position | null>(null);
   const [detailStock, setDetailStock] = useState<any | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -96,8 +97,12 @@ export default function PositionsPage() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const res = await fetch('/stock-pool/api/positions', {
-        method: 'POST',
+      // 编辑走 PUT（仅买入价/数量），新建走 POST
+      const url = editingPosition
+        ? `/stock-pool/api/positions/${editingPosition.id}`
+        : '/stock-pool/api/positions';
+      const res = await fetch(url, {
+        method: editingPosition ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: formData.code.trim(),
@@ -108,6 +113,7 @@ export default function PositionsPage() {
 
       if (res.ok) {
         setDialogOpen(false);
+        setEditingPosition(null);
         setFormData({ code: '', price: '', quantity: '' });
         fetchData();
       } else {
@@ -120,6 +126,22 @@ export default function PositionsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const openAdd = () => {
+    setEditingPosition(null);
+    setFormData({ code: '', price: '', quantity: '' });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (position: Position) => {
+    setEditingPosition(position);
+    setFormData({
+      code: position.code,
+      price: String(position.price),
+      quantity: String(position.quantity)
+    });
+    setDialogOpen(true);
   };
 
   const handleDelete = async (position: Position) => {
@@ -208,7 +230,7 @@ export default function PositionsPage() {
               </div>
             )}
 
-            <Button onClick={() => setDialogOpen(true)} className="gap-2">
+            <Button onClick={openAdd} className="gap-2">
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">添加持仓</span>
             </Button>
@@ -357,14 +379,24 @@ export default function PositionsPage() {
                         {new Date(p.createdAt).toLocaleString('zh-CN')}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-red-400"
-                          onClick={(e) => { e.stopPropagation(); handleDelete(p); }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={(e) => { e.stopPropagation(); openEdit(p); }}
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-400"
+                            onClick={(e) => { e.stopPropagation(); handleDelete(p); }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -382,10 +414,10 @@ export default function PositionsPage() {
         </Card>
       </main>
 
-      {/* Add Dialog（vius Dialog 无 Header/Title 子组件，内容自行补 padding） */}
+      {/* Add/Edit Dialog（vius Dialog 无 Header/Title 子组件，内容自行补 padding） */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="bg-surface border-border p-6">
-          <div className="text-[15px] font-semibold">添加持仓</div>
+          <div className="text-[15px] font-semibold">{editingPosition ? '编辑持仓' : '添加持仓'}</div>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="text-sm text-fg-3">股票代码</label>
@@ -393,8 +425,11 @@ export default function PositionsPage() {
                 value={formData.code}
                 onChange={(e) => setFormData({ ...formData, code: e.target.value })}
                 placeholder="如: 600519"
+                disabled={!!editingPosition}
               />
-              <p className="text-xs text-fg-3">名称、市场将自动识别；同一股票可添加多条买入记录</p>
+              {!editingPosition && (
+                <p className="text-xs text-fg-3">名称、市场将自动识别；同一股票可添加多条买入记录</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -422,9 +457,9 @@ export default function PositionsPage() {
             </div>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setDialogOpen(false)}>取消</Button>
+            <Button variant="secondary" onClick={() => { setDialogOpen(false); setEditingPosition(null); }}>取消</Button>
             <Button onClick={handleSave} disabled={!canSubmit || saving}>
-              {saving ? '添加中...' : '添加'}
+              {saving ? '保存中...' : (editingPosition ? '保存' : '添加')}
             </Button>
           </div>
         </DialogContent>

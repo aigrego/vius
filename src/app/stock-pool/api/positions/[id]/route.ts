@@ -2,6 +2,90 @@ import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import prisma from '@/lib/prisma';
 
+// PUT /api/positions/[id] - 更新持仓记录（仅买入价/数量可改，代码不可变；按用户隔离）
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    let session;
+    try {
+      session = await requireUser();
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        return NextResponse.json(
+          { success: false, error: '未登录' },
+          { status: 401 }
+        );
+      }
+      throw e;
+    }
+
+    const { id } = await params;
+    const positionId = parseInt(id, 10);
+    if (!Number.isInteger(positionId)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid position id' },
+        { status: 400 }
+      );
+    }
+
+    const body = await request.json();
+    const { price, quantity } = body;
+
+    const priceNum = Number(price);
+    const quantityNum = Number(quantity);
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      return NextResponse.json(
+        { success: false, error: '买入价必须大于 0' },
+        { status: 400 }
+      );
+    }
+    if (!Number.isInteger(quantityNum) || quantityNum <= 0) {
+      return NextResponse.json(
+        { success: false, error: '买入数量必须为正整数' },
+        { status: 400 }
+      );
+    }
+
+    // updateMany + userId 条件：天然限定归属，count=0 即记录不存在
+    const [updated] = await prisma.$transaction([
+      prisma.position.updateMany({
+        where: { id: positionId, userId: session.uid },
+        data: { price: priceNum, quantity: quantityNum }
+      }),
+      prisma.auditLog.create({
+        data: {
+          action: 'UPDATE',
+          details: `Updated position: #${positionId} ${quantityNum}股 @ ${priceNum}`,
+          agentId: session.username || 'web-ui'
+        }
+      })
+    ]);
+
+    if (updated.count === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Position not found' },
+        { status: 404 }
+      );
+    }
+
+    const position = await prisma.position.findUnique({ where: { id: positionId } });
+
+    return NextResponse.json({
+      success: true,
+      data: { ...position, price: Number(position!.price) }
+    });
+
+  } catch (error) {
+    console.error('Update position error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update position' },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE /api/positions/[id] - 删除一条持仓记录（按用户隔离，只能删自己的）
 export async function DELETE(
   request: Request,
