@@ -1,9 +1,7 @@
 'use client';
 
-import * as React from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ChevronDown, LogOut, Settings, Sun } from 'lucide-react';
+import { Logo } from '@/components/Logo';
+import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,10 +9,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Logo } from '@/components/Logo';
 import { applyTheme } from '@/lib/theme';
+import { ChevronDown, LogOut, Settings, Sun } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import * as React from 'react';
 
 export const HEADER_HEIGHT = 52;
 
@@ -108,13 +108,13 @@ function UserMenu({ user }: { user: SessionUser | null }) {
             <div className="max-w-full truncate text-[12px] text-fg-3">@{user.username}</div>
           )}
           <Badge tone="blue" className="mt-1">
-            {user?.role === 'admin' ? '公司管理员' : '成员'}
+            {user?.role === 'admin' ? '管理员' : 'VIP用户'}
           </Badge>
         </div>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => router.push('/profile')}>
           <Settings size={15} className="flex-none text-fg-3" />
-          个人设置
+          个人资料
         </DropdownMenuItem>
         {/* 浅色模式开关：用普通行避免点击后菜单自动收起 */}
         <div className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] text-fg-1">
