@@ -47,6 +47,82 @@ const fetcher = async (url: string): Promise<NewsPage> => {
 const stripHtml = (html: string): string =>
     html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
+// 6 位代码 → 完整代码（6→SS，0/3→SZ，4/8/920→BJ），供 /api/stocks/real 与详情页使用
+const toFullCode = (code: string): string => {
+    if (code.startsWith('6')) return `${code}.SS`;
+    if (code.startsWith('4') || code.startsWith('8') || code.startsWith('920')) return `${code}.BJ`;
+    return `${code}.SZ`;
+};
+
+const fullToMarket = (full: string): string => {
+    const sfx = full.split('.')[1];
+    return sfx === 'SS' ? 'sh' : sfx === 'BJ' ? 'bj' : 'sz';
+};
+
+/* 关联股票标签：拿 codes 轮询 /api/stocks/real（15s），
+   渲染「▲ 名称(完整代码) +x.xx%」实时行情卡片，点击开个股详情弹窗 */
+const REAL_FIELDS = ['prod_code', 'prod_name', 'px_change', 'px_change_rate'];
+
+interface RealSnapshot {
+    data?: { fields?: string[]; snapshot?: Record<string, (string | number)[]> };
+}
+
+const realFetcher = async (url: string): Promise<RealSnapshot> => {
+    const res = await fetch(url);
+    const json = await res.json();
+    return json.code === 200 ? json : { data: { fields: [], snapshot: {} } };
+};
+
+function StocksTag({ codes, onOpen }: { codes: string[]; onOpen: (code: string, name: string, market: string) => void }) {
+    const fullCodes = codes.map(toFullCode);
+    const { data: realResp } = useSWR<RealSnapshot>(
+        `/api/stocks/real?prod_code=${fullCodes.join(',')}&fields=${REAL_FIELDS.join(',')}`,
+        realFetcher,
+        { refreshInterval: 15000, revalidateOnFocus: false }
+    );
+
+    const snapshot = realResp?.data?.snapshot ?? {};
+
+    // 行情未返回/失败时退化为纯代码徽章
+    if (Object.keys(snapshot).length === 0) {
+        return (
+            <div className="mt-1 flex flex-wrap gap-1">
+                {codes.map(code => (
+                    <button key={code} onClick={() => onOpen(code, code, fullToMarket(toFullCode(code)))}>
+                        <Badge tone="neutral" className="cursor-pointer hover:bg-surface-sunken">{code}</Badge>
+                    </button>
+                ))}
+            </div>
+        );
+    }
+
+    return (
+        <div className="mt-1.5 flex flex-row flex-wrap gap-2">
+            {Object.values(snapshot).map(row => {
+                const stock = Object.fromEntries(REAL_FIELDS.map((f, i) => [f, row[i]]));
+                const change = stock['px_change'] as number;
+                const rate = stock['px_change_rate'] as number;
+                const fullCode = String(stock['prod_code']);
+                const name = String(stock['prod_name']);
+                const state = change > 0
+                    ? { icon: '▲', text: `+${rate.toFixed(2)}`, cls: 'text-up border-up' }
+                    : change < 0
+                        ? { icon: '▼', text: rate.toFixed(2), cls: 'text-down border-down' }
+                        : { icon: '', text: rate.toFixed(2), cls: 'text-gray-600 border-gray-600' };
+                return (
+                    <button
+                        key={fullCode}
+                        onClick={() => onOpen(fullCode.split('.')[0], name, fullToMarket(fullCode))}
+                        className={`cursor-pointer flex flex-row rounded-sm border py-1 px-2 text-sm ${state.cls}`}
+                    >
+                        {state.icon} {name}({fullCode}) {state.text}%
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
 export default function NewsFeed() {
     const { data: firstPage } = useSWR<NewsPage>(
         `/api/ashare/news?page=1&pageSize=${PAGE_SIZE}`,
@@ -85,12 +161,12 @@ export default function NewsFeed() {
         }
     };
 
-    // 点 codes 徽章 → 个股详情弹窗（名称未知时用代码占位，与 ashare 页一致）
-    const openDetail = (code: string) => {
+    // 点关联股票标签 → 个股详情弹窗（名称/市场由 StocksTag 的行情数据带出，未知时用代码占位）
+    const openDetail = (code: string, name: string, market: string) => {
         setDetailStock({
             code,
-            name: code,
-            market: '',
+            name,
+            market,
             open: 0, close: 0, high: 0, low: 0,
             current: 0, volume: 0, amount: 0,
             changePct: 0, cost: 0, pnlPct: 0, pnlAmount: 0,
@@ -104,7 +180,7 @@ export default function NewsFeed() {
                 <span className="text-sm font-semibold text-fg-1">资讯快讯</span>
                 <span className="text-xs text-fg-3">共 {total} 条 · 15s 自动刷新</span>
             </div>
-            <div className="flex-1 overflow-y-auto px-4 py-2" style={{ maxHeight: 720 }}>
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2">
                 {items.length === 0 && (
                     <div className="py-10 text-center text-sm text-fg-3">暂无快讯</div>
                 )}
@@ -123,15 +199,10 @@ export default function NewsFeed() {
                             {stripHtml(item.content)}
                         </div>
                         {item.codes && (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                                {item.codes.split(',').map(c => c.trim()).filter(Boolean).map(code => (
-                                    <button key={code} onClick={() => openDetail(code)}>
-                                        <Badge tone="neutral" className="cursor-pointer hover:bg-surface-sunken">
-                                            {code}
-                                        </Badge>
-                                    </button>
-                                ))}
-                            </div>
+                            <StocksTag
+                                codes={item.codes.split(',').map(c => c.trim()).filter(Boolean)}
+                                onOpen={openDetail}
+                            />
                         )}
                     </div>
                 ))}

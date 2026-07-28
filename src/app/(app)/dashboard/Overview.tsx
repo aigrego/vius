@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
+import { Badge } from '@/components/ui/badge';
+import type { RealtimeStock } from '@/hooks/useRealtimeData';
+import { NumberFlowFormat, StockFormat } from '@/utils/format';
 import NumberFlow from '@number-flow/react';
 import { Eye, EyeOff } from 'lucide-react';
-import { NumberFlowFormat, StockFormat } from '@/utils/format';
-import { Badge } from '@/components/ui/badge';
-import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
-import type { RealtimeStock } from '@/hooks/useRealtimeData';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 
 /* 行情总览三排卡片：指数 / 持仓股 / 股票池。
    数据流：挂载先读 /api/stocks/overview 缓存立即渲染 → 随后 ?refresh=1 重算更新
@@ -173,9 +173,9 @@ export default function Overview() {
             {/* 排 2：持仓股（三行：当日涨跌 / 名称代码 / 成本盈亏+资讯；眼睛图标控制成本盈亏显隐）。
                 有持仓才显示本排，无持仓不显示（null 视为无数据） */}
             {data?.positions && data.positions.length > 0 && (
-            <section>
-                <div className="text-sm text-fg-3 mb-2">持仓股</div>
-                <div className="grid grid-cols-6 gap-4 w-full">
+                <section>
+                    <div className="text-sm text-fg-3 mb-2">持仓股</div>
+                    <div className="grid grid-cols-6 gap-4 w-full">
                         {data.positions.map(p => {
                             const showPnl = !!showPnlMap[p.code];
                             return (
@@ -208,14 +208,18 @@ export default function Overview() {
                                         </div>
                                         <Badge tone="blue">资讯 {p.newsCount ?? 0}</Badge>
                                     </div>
-                                    {/* 第三行：成本/盈亏（默认打码，眼睛图标切换） */}
+                                    {/* 第三行：成本/盈亏（默认打码，眼睛图标切换）；括号内为盈亏比例=盈亏/(成本×数量) */}
                                     <div className="flex flex-row items-center gap-2 text-xs text-fg-3">
                                         {showPnl ? (
                                             <>
-                                                <span>成本 {p.avgCost.toFixed(3)}</span>
-                                                <span className={p.pnl === null ? '' : trendColor(p.pnl)}>
-                                                    盈亏 {p.pnl === null ? '-' : StockFormat.trend(p.pnl)}
+                                                <span>{p.avgCost.toFixed(3)}</span>
+                                                <span className={p.pnl === null ? '' : trendColor(p.pnl)}>{p.pnl === null ? '-' : StockFormat.trend(p.pnl)}
                                                 </span>
+                                                {p.pnl !== null && p.avgCost > 0 && p.totalQty > 0 && (
+                                                    <span className={trendColor(p.pnl)}>
+                                                        ({StockFormat.rate(p.pnl / (p.avgCost * p.totalQty))})
+                                                    </span>
+                                                )}
                                             </>
                                         ) : (
                                             <span>成本 *** 盈亏 ***</span>
@@ -224,15 +228,15 @@ export default function Overview() {
                                 </div>
                             );
                         })}
-                </div>
-            </section>
+                    </div>
+                </section>
             )}
 
             {/* 排 3：股票池（三行：当日涨跌 / 名称代码 / 关注后涨跌+资讯）。有关注才显示本排 */}
             {data?.watchlist && data.watchlist.length > 0 && (
-            <section>
-                <div className="text-sm text-fg-3 mb-2">股票池</div>
-                <div className="grid grid-cols-6 gap-4 w-full">
+                <section>
+                    <div className="text-sm text-fg-3 mb-2">股票池</div>
+                    <div className="grid grid-cols-6 gap-4 w-full">
                         {data.watchlist.map(w => (
                             <div
                                 key={w.code}
@@ -260,8 +264,8 @@ export default function Overview() {
                                 </div>
                             </div>
                         ))}
-                </div>
-            </section>
+                    </div>
+                </section>
             )}
 
             {/* 个股详情弹窗 */}

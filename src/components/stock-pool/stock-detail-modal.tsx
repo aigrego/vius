@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import useSWR from 'swr';
 import {
   Dialog,
   DialogContent,
@@ -22,10 +23,43 @@ interface StockDetailModalProps {
 
 type DetailTab = 'kline' | 'chips' | 'news';
 
+/* 打开时按 code 补拉实时行情（/api/stocks/real）合并进展示数据：
+   从快讯/排行/龙虎榜等入口打开时调用方只传了基础信息（行情字段为 0），
+   由弹窗自己补齐当前价/今开/昨收/最高/最低等；cost/pnl 仍以调用方传入为准 */
+const REAL_FIELDS = [
+  'prod_name', 'last_px', 'px_change_rate', 'open_px', 'preclose_px',
+  'high_px', 'low_px', 'turnover_volume', 'turnover_value'
+];
+
+// market 为空时按代码前缀推断完整代码（6→SS，0/3→SZ，4/8/920→BJ）
+const toFullCode = (code: string, market?: string): string => {
+  if (code.includes('.')) return code;
+  const suffix = market === 'sh' ? 'SS'
+    : market === 'sz' ? 'SZ'
+    : market === 'bj' ? 'BJ'
+    : code.startsWith('6') ? 'SS'
+    : (code.startsWith('4') || code.startsWith('8') || code.startsWith('920')) ? 'BJ'
+    : 'SZ';
+  return `${code}.${suffix}`;
+};
+
+const realFetcher = async (url: string) => {
+  const res = await fetch(url);
+  const json = await res.json();
+  return json.code === 200 ? json.data : null;
+};
+
 export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModalProps) {
   const [tab, setTab] = useState<DetailTab>('kline');
   // 记录已激活过的 Tab，数据在首次激活时才请求，之后保持挂载避免重复请求
   const [visited, setVisited] = useState<Set<DetailTab>>(new Set(['kline']));
+
+  const fullCode = stock ? toFullCode(stock.code, stock.market) : '';
+  const { data: snapshot } = useSWR(
+    open && stock ? `/api/stocks/real?prod_code=${fullCode}&fields=${REAL_FIELDS.join(',')}` : null,
+    realFetcher,
+    { refreshInterval: 15000, revalidateOnFocus: false }
+  );
 
   const handleTabChange = (value: string) => {
     const next = value as DetailTab;
@@ -35,8 +69,29 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
 
   if (!stock) return null;
 
-  const isProfit = stock.pnlPct > 0;
-  const isUp = stock.changePct > 0;
+  // 合并实时行情（snapshot 行为 fields 顺序取值）
+  const row = snapshot?.snapshot?.[fullCode];
+  const quote: Partial<RealtimeStock> = row
+    ? {
+        current: Number(row[1]) || stock.current,
+        changePct: Number(row[2]) || 0,
+        open: Number(row[3]) || 0,
+        close: Number(row[4]) || 0,
+        high: Number(row[5]) || 0,
+        low: Number(row[6]) || 0,
+        volume: Number(row[7]) || 0,
+        amount: Number(row[8]) || 0,
+        updatedAt: new Date().toISOString()
+      }
+    : {};
+  const merged: RealtimeStock = { ...stock, ...quote };
+  // 名称占位（调用方未知时用代码占位）时用行情里的名称替换
+  if (row && (!merged.name || merged.name === merged.code)) {
+    merged.name = String(row[0] || merged.name);
+  }
+
+  const isProfit = merged.pnlPct > 0;
+  const isUp = merged.changePct > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -44,18 +99,18 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
         {/* vius 的 Dialog 无 DialogHeader/DialogTitle，用普通 div 代替 */}
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-2xl font-mono font-semibold">{stock.code}</div>
-            <p className="text-fg-3">{stock.name}</p>
+            <div className="text-2xl font-mono font-semibold">{merged.code}</div>
+            <p className="text-fg-3">{merged.name}</p>
           </div>
           <div className="flex gap-2">
             <Badge tone="neutral" className="text-lg px-3 py-1">
-              {(stock.market || 'unknown').toUpperCase()}
+              {(merged.market || 'unknown').toUpperCase()}
             </Badge>
             <Badge
               tone={isUp ? 'success' : 'danger'}
               className="text-lg px-3 py-1"
             >
-              {isUp ? '+' : ''}{stock.changePct}%
+              {isUp ? '+' : ''}{merged.changePct}%
             </Badge>
           </div>
         </div>
@@ -67,7 +122,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
             </CardHeader>
             <CardContent>
               <div className={`text-2xl font-mono font-bold ${isUp ? 'text-up' : 'text-down'}`}>
-                ¥{stock.current?.toFixed(2) || '-'}
+                ¥{merged.current?.toFixed(2) || '-'}
               </div>
             </CardContent>
           </Card>
@@ -79,7 +134,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
             <CardContent>
               <div className="text-2xl font-mono font-bold text-yellow-400">
                 {/* cost 是 Prisma Decimal，序列化后为字符串，先转 Number */}
-                ¥{stock.cost ? Number(stock.cost).toFixed(3) : '-'}
+                ¥{merged.cost ? Number(merged.cost).toFixed(3) : '-'}
               </div>
             </CardContent>
           </Card>
@@ -93,14 +148,14 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
                 <>
                   <TrendingUp className="w-5 h-5 text-up" />
                   <div className="text-2xl font-mono font-bold text-up">
-                    +{stock.pnlPct}%
+                    +{merged.pnlPct}%
                   </div>
                 </>
               ) : (
                 <>
                   <TrendingDown className="w-5 h-5 text-down" />
                   <div className="text-2xl font-mono font-bold text-down">
-                    {stock.pnlPct}%
+                    {merged.pnlPct}%
                   </div>
                 </>
               )}
@@ -113,7 +168,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
             </CardHeader>
             <CardContent>
               <div className={`text-2xl font-mono font-bold ${isProfit ? 'text-up' : 'text-down'}`}>
-                {isProfit ? '+' : ''}¥{stock.pnlAmount?.toFixed(2) || '0.00'}
+                {isProfit ? '+' : ''}¥{merged.pnlAmount?.toFixed(2) || '0.00'}
               </div>
             </CardContent>
           </Card>
@@ -123,33 +178,33 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
           <div className="flex items-center gap-2 text-sm">
             <BarChart3 className="w-4 h-4 text-fg-3" />
             <span className="text-fg-3">今开:</span>
-            <span className="font-mono">¥{stock.open?.toFixed(2)}</span>
+            <span className="font-mono">¥{merged.open?.toFixed(2)}</span>
           </div>
 
           <div className="flex items-center gap-2 text-sm">
             <DollarSign className="w-4 h-4 text-fg-3" />
             <span className="text-fg-3">昨收:</span>
-            <span className="font-mono">¥{stock.close?.toFixed(2)}</span>
+            <span className="font-mono">¥{merged.close?.toFixed(2)}</span>
           </div>
 
           <div className="flex items-center gap-2 text-sm">
             <TrendingUp className="w-4 h-4 text-up" />
             <span className="text-fg-3">最高:</span>
-            <span className="font-mono text-up">¥{stock.high?.toFixed(2)}</span>
+            <span className="font-mono text-up">¥{merged.high?.toFixed(2)}</span>
           </div>
 
           <div className="flex items-center gap-2 text-sm">
             <TrendingDown className="w-4 h-4 text-down" />
             <span className="text-fg-3">最低:</span>
-            <span className="font-mono text-down">¥{stock.low?.toFixed(2)}</span>
+            <span className="font-mono text-down">¥{merged.low?.toFixed(2)}</span>
           </div>
         </div>
 
-        {stock.volume > 0 && (
+        {merged.volume > 0 && (
           <div className="mt-4 pt-4 border-t border-border">
             <div className="flex items-center gap-2 text-sm text-fg-3">
               <Clock className="w-4 h-4" />
-              <span>最后更新: {stock.updatedAt ? new Date(stock.updatedAt).toLocaleString('zh-CN') : '-'}</span>
+              <span>最后更新: {merged.updatedAt ? new Date(merged.updatedAt).toLocaleString('zh-CN') : '-'}</span>
             </div>
           </div>
         )}
@@ -172,25 +227,25 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
 
           <div className={tab === 'kline' ? '' : 'hidden'}>
             <StockChart
-              code={stock.code}
-              market={stock.market || 'sh'}
-              name={stock.name}
+              code={merged.code}
+              market={merged.market || 'sh'}
+              name={merged.name}
             />
           </div>
           {visited.has('chips') && (
             <div className={tab === 'chips' ? '' : 'hidden'}>
               <StockChips
-                code={stock.code}
-                market={stock.market || 'sh'}
-                currentPrice={stock.current}
+                code={merged.code}
+                market={merged.market || 'sh'}
+                currentPrice={merged.current}
               />
             </div>
           )}
           {visited.has('news') && (
             <div className={tab === 'news' ? '' : 'hidden'}>
               <StockNews
-                code={stock.code}
-                market={stock.market || 'sh'}
+                code={merged.code}
+                market={merged.market || 'sh'}
               />
             </div>
           )}

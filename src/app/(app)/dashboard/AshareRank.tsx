@@ -58,7 +58,7 @@ export default function AshareRank() {
                 <span className="text-sm font-semibold text-fg-1">A股总览 · 涨幅排行</span>
                 {data?.date && <span className="text-xs text-fg-3">{data.date}</span>}
             </div>
-            <div className="flex-1 overflow-y-auto px-2 py-1" style={{ maxHeight: 720 }}>
+            <div className="flex-1 min-h-0 overflow-y-auto px-2 py-1">
                 {(!data || data.list.length === 0) && (
                     <div className="py-10 text-center text-sm text-fg-3">暂无数据</div>
                 )}
