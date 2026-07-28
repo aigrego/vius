@@ -34,3 +34,7 @@ next-env.d.ts
 # local tooling
 .chrome-profile/
 .kimi-code/
+
+# pnpm（项目统一用 npm）
+pnpm-lock.yaml
+pnpm-workspace.yaml
