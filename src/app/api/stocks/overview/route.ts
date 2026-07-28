@@ -96,8 +96,25 @@ async function fetchUserQuotes(positions: Position[], watchlist: Watchlist[]): P
   return new Map(quotes.map((q) => [q.code.toUpperCase(), q]));
 }
 
+// 近 7 天快讯一次查出，内存里按 code 统计条数（持仓/股票池两排共用，避免逐 code 查询）
+async function buildNewsCountMap(): Promise<Map<string, number>> {
+  const newsCountByCode = new Map<string, number>();
+  const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+  const newsRows = await prisma.newsFlash.findMany({
+    where: { publishedAt: { gte: since }, codes: { not: null } },
+    select: { codes: true },
+  });
+  for (const row of newsRows) {
+    for (const raw of (row.codes ?? '').split(',')) {
+      const code = raw.trim().toUpperCase();
+      if (code) newsCountByCode.set(code, (newsCountByCode.get(code) ?? 0) + 1);
+    }
+  }
+  return newsCountByCode;
+}
+
 // 持仓排：同 code 多条持仓合并，数量累加、成本按 (price×qty) 加权平均
-function buildPositions(positions: Position[], quoteByCode: Map<string, RealtimeQuote>) {
+function buildPositions(positions: Position[], quoteByCode: Map<string, RealtimeQuote>, newsCountByCode: Map<string, number>) {
   const groups = new Map<string, { code: string; name: string; market: string; totalQty: number; costSum: number }>();
   for (const p of positions) {
     const g = groups.get(p.code) ?? { code: p.code, name: p.name, market: p.market, totalQty: 0, costSum: 0 };
@@ -120,36 +137,23 @@ function buildPositions(positions: Position[], quoteByCode: Map<string, Realtime
       changePct: q?.changePct ?? 0,
       // 无行情时 pnl 给 null，前端显示 '-'
       pnl: q ? round((current - avgCost) * g.totalQty) : null,
+      newsCount: newsCountByCode.get(g.code.toUpperCase()) ?? 0,
     };
   });
 }
 
 // 股票池排：关注后涨跌幅（markPrice 为 null 时懒回填为当前价）+ 近 7 天关联资讯数
-async function buildWatchlist(watchlist: Watchlist[], quoteByCode: Map<string, RealtimeQuote>) {
-  // 近 7 天快讯一次查出，内存里按 code 统计条数（避免逐 code 查询）
-  const newsCountByCode = new Map<string, number>();
-  if (watchlist.length > 0) {
-    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-    const newsRows = await prisma.newsFlash.findMany({
-      where: { publishedAt: { gte: since }, codes: { not: null } },
-      select: { codes: true },
-    });
-    for (const row of newsRows) {
-      for (const raw of (row.codes ?? '').split(',')) {
-        const code = raw.trim().toUpperCase();
-        if (code) newsCountByCode.set(code, (newsCountByCode.get(code) ?? 0) + 1);
-      }
-    }
-  }
-
+async function buildWatchlist(watchlist: Watchlist[], quoteByCode: Map<string, RealtimeQuote>, newsCountByCode: Map<string, number>) {
   const backfills: Promise<unknown>[] = [];
   const result = watchlist.map((w) => {
     const q = quoteByCode.get(w.code.toUpperCase());
     const current = q?.current ?? 0;
     let sincePct = 0;
+    let sinceChange = 0;
     if (w.markPrice !== null) {
       const mark = Number(w.markPrice);
       sincePct = q && mark > 0 ? round(((current - mark) / mark) * 100) : 0;
+      sinceChange = q && mark > 0 ? round(current - mark, 1000) : 0;
     } else if (q && current > 0) {
       // 存量数据没有关注价：懒回填为当前价（best-effort），当次涨跌幅记 0
       backfills.push(
@@ -166,6 +170,7 @@ async function buildWatchlist(watchlist: Watchlist[], quoteByCode: Map<string, R
       change: q ? round(q.current - q.close, 1000) : 0,
       changePct: q?.changePct ?? 0,
       sincePct,
+      sinceChange, // 关注后涨跌额
       newsCount: newsCountByCode.get(w.code.toUpperCase()) ?? 0,
     };
   });
@@ -195,11 +200,13 @@ async function refresh(uid: string): Promise<{ data: OverviewData; notes: string
     notes.push('指数行情获取失败，已回退缓存数据');
   }
 
-  // 持仓 + 股票池（合并为一次行情请求）
+  // 持仓 + 股票池（合并为一次行情请求；资讯统计两排共用一次查询）
   try {
     const quoteByCode = await fetchUserQuotes(positions, watchlistRows);
-    data.positions = buildPositions(positions, quoteByCode);
-    data.watchlist = await buildWatchlist(watchlistRows, quoteByCode);
+    const newsCountByCode =
+      positions.length > 0 || watchlistRows.length > 0 ? await buildNewsCountMap() : new Map<string, number>();
+    data.positions = buildPositions(positions, quoteByCode, newsCountByCode);
+    data.watchlist = await buildWatchlist(watchlistRows, quoteByCode, newsCountByCode);
     data.updatedAt.positions = refreshedAt;
     data.updatedAt.watchlist = refreshedAt;
     upserts.push(upsertCache(uid, 'positions', data.positions));
