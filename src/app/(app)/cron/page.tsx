@@ -16,6 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { CirclePlay, ShieldX } from 'lucide-react';
+import { cronToHuman } from '@/utils/cron-human';
 
 /* 定时任务管理页（仅 admin）：cron 表达式 / 启用开关可改，支持手动触发。
    SWR 每 5s 轮询 /api/cron；非 admin（403）显示无权限空态。
@@ -186,7 +187,7 @@ export default function CronJobsPage() {
     <div className="mx-auto w-full max-w-[1080px] px-6 py-8">
       <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg-1">定时任务</h1>
       <p className="mb-5 mt-1 text-[13px] text-fg-3">
-        修改 cron 表达式或启停后立即生效；每 5 秒自动刷新运行状态
+        调整执行频率或启停后立即生效；每 5 秒自动刷新运行状态
       </p>
 
       <Card>
@@ -195,7 +196,7 @@ export default function CronJobsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>任务</TableHead>
-                <TableHead className="w-[190px]">cron 表达式</TableHead>
+                <TableHead className="w-[190px]">执行频率</TableHead>
                 <TableHead>时区</TableHead>
                 <TableHead>启用</TableHead>
                 <TableHead>上次运行</TableHead>
@@ -236,18 +237,21 @@ export default function CronJobsPage() {
                         <span className="text-[12px] text-fg-3">{job.description}</span>
                       </div>
                     </TableCell>
-                    {/* cron 表达式（可编辑，保存后生效） */}
+                    {/* 执行频率：人类可读文本为主；下方输入框仍可编辑 cron 表达式，草稿实时预览含义 */}
                     <TableCell>
+                      <span className="text-[13px] text-fg-1">{cronToHuman(job.cron)}</span>
                       <Input
                         value={draft}
                         onChange={(e) =>
                           setDrafts((prev) => ({ ...prev, [job.id]: e.target.value }))
                         }
-                        className="h-7 font-mono text-[12.5px]"
+                        className="mt-1 h-7 font-mono text-[12.5px]"
                         style={dirty ? { borderColor: 'var(--brand-orange)' } : undefined}
                       />
                       {dirty && (
-                        <span className="mt-0.5 block text-[11px] text-fg-3">未保存</span>
+                        <span className="mt-0.5 block text-[11px] text-fg-3">
+                          未保存 · 新频率：{cronToHuman(draft.trim())}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-[12.5px] text-fg-2">

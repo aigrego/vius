@@ -185,6 +185,11 @@ const runningJobs = new Set<string>();
 
 /* ---------- 运行记录 ---------- */
 
+// 单任务最长执行时间：超时标记 failed 并结束本次运行记录（handler 无法真正取消，
+// 迟到完成也不会再覆盖状态，见 finish 的 status='running' 守卫），
+// 防止挂死的任务让列表永远「运行中」、手动触发永远 409
+const JOB_TIMEOUT_MS = 30 * 60 * 1000;
+
 // 执行 handler 并落运行记录；runId 已传时复用该行（手动触发已先建好 running 行），
 // 否则这里先建（自动调度）。任何一步写库失败只 console.error，不影响任务本身
 async function executeJob(job: JobDef, trigger: 'auto' | 'manual', runId?: number): Promise<void> {
@@ -203,8 +208,9 @@ async function executeJob(job: JobDef, trigger: 'auto' | 'manual', runId?: numbe
   const finish = async (status: 'success' | 'failed', message?: string): Promise<void> => {
     if (id === null) return;
     try {
-      await prisma.cronRun.update({
-        where: { id },
+      // updateMany + status='running' 守卫：超时已标 failed 后，迟到的 handler 完成不再覆盖
+      await prisma.cronRun.updateMany({
+        where: { id, status: 'running' },
         data: { status, message: message ?? null, finishedAt: new Date() },
       });
     } catch (error) {
@@ -212,13 +218,26 @@ async function executeJob(job: JobDef, trigger: 'auto' | 'manual', runId?: numbe
     }
   };
 
+  let timer: ReturnType<typeof setTimeout> | null = null;
   try {
-    await job.handler();
-    await finish('success');
+    const outcome = await Promise.race([
+      job.handler().then(() => 'done' as const),
+      new Promise<'timeout'>(resolve => {
+        timer = setTimeout(() => resolve('timeout'), JOB_TIMEOUT_MS);
+      }),
+    ]);
+    if (outcome === 'timeout') {
+      console.error(`[scheduler] 任务执行超时（${job.id}，>${JOB_TIMEOUT_MS / 60000} 分钟）`);
+      await finish('failed', `执行超时（>${JOB_TIMEOUT_MS / 60000} 分钟），已强制结束`);
+    } else {
+      await finish('success');
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[scheduler] 任务执行失败（${job.id}）:`, error);
     await finish('failed', message.slice(0, 1000));
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -251,6 +270,22 @@ async function loadOverrides(): Promise<Map<string, { cron: string; enabled: boo
   }
 }
 
+// 进程重启时遗留的 running 记录一律标记失败：重启意味着 handler 已中断，
+// 不清理的话僵尸 running 会让列表永远显示「运行中」、手动触发永远 409
+async function cleanupStaleRuns(): Promise<void> {
+  try {
+    const stale = await prisma.cronRun.updateMany({
+      where: { status: 'running' },
+      data: { status: 'failed', message: '进程重启，运行中断', finishedAt: new Date() },
+    });
+    if (stale.count > 0) {
+      console.log(`[scheduler] 已清理 ${stale.count} 条中断的运行记录`);
+    }
+  } catch (error) {
+    console.error('[scheduler] 清理中断运行记录失败:', error);
+  }
+}
+
 // 启动调度：合并覆盖配置后逐个注册。永不抛出（instrumentation 调用方不 await）
 export async function startScheduler(): Promise<void> {
   const g = globalThis as unknown as { __oriolesSchedulerStarted?: boolean };
@@ -258,6 +293,7 @@ export async function startScheduler(): Promise<void> {
   g.__oriolesSchedulerStarted = true;
 
   try {
+    await cleanupStaleRuns();
     const overrides = await loadOverrides();
     for (const job of JOBS) {
       const o = overrides.get(job.id);
