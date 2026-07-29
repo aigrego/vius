@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState, ComponentProps } from 'react';
-import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { SegBtn } from '@/components/ui/segmented';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
+import { RealtimeStock } from '@/hooks/useRealtimeData';
 import { Search, ChevronUp, ChevronDown } from 'lucide-react';
 
 // 与 GET /api/lhb 返回结构一致
@@ -84,6 +85,31 @@ export default function LhbPage() {
   // 行展开：key = code-tradeId；席位数据按 key 缓存
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [seatsMap, setSeatsMap] = useState<Record<string, { buy: LhbSeatItem[]; sell: LhbSeatItem[] } | 'loading'>>({});
+
+  // 个股详情弹窗
+  const [detailStock, setDetailStock] = useState<RealtimeStock | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  // 用榜单基础信息合成 RealtimeStock 打开详情弹窗（实时行情由弹窗自拉，参考 ashare 页做法）
+  const openStockDetail = (item: LhbStockItem) => {
+    setDetailStock({
+      code: item.code,
+      name: item.name,
+      market: item.market,
+      open: 0,
+      close: 0,
+      current: item.closePrice,
+      high: 0,
+      low: 0,
+      volume: 0,
+      amount: 0,
+      changePct: item.changePct,
+      pnlPct: 0,
+      pnlAmount: 0,
+      cost: 0,
+    });
+    setDetailOpen(true);
+  };
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -224,9 +250,13 @@ export default function LhbPage() {
                   <TableRow key={key} className={expanded ? 'bg-surface-2' : ''}>
                     <TableCell className="font-mono">{item.code}</TableCell>
                     <TableCell>
-                      <Link href={`/stock/${item.code}`} className="font-medium hover:text-brand-blue hover:underline">
+                      <button
+                        type="button"
+                        onClick={() => openStockDetail(item)}
+                        className="cursor-pointer font-medium hover:text-brand-blue hover:underline"
+                      >
                         {item.name}
-                      </Link>
+                      </button>
                     </TableCell>
                     <TableCell><Badge tone={badge.tone}>{badge.text}</Badge></TableCell>
                     <TableCell className="text-right font-mono">{item.closePrice.toFixed(2)}</TableCell>
@@ -262,6 +292,9 @@ export default function LhbPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* 个股详情弹窗 */}
+      <StockDetailModal stock={detailStock} open={detailOpen} onOpenChange={setDetailOpen} />
     </div>
   );
 }

@@ -113,7 +113,8 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-surface border-border max-w-2xl max-h-[85vh] overflow-y-auto p-6">
+      {/* 加宽弹窗避免卡片数据溢出；壳层 overflow-hidden 不滚动，超高时由 Tab 内容块独立滚动 */}
+      <DialogContent className="bg-surface border-border w-[min(1120px,94vw)] max-h-[86vh] overflow-hidden p-6 flex flex-col">
         {/* vius 的 Dialog 无 DialogHeader/DialogTitle，用普通 div 代替 */}
         <div className="flex items-center justify-between">
           <div>
@@ -139,7 +140,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
               <CardTitle className="text-xs text-fg-3 font-normal">当前价格</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-mono font-bold ${isUp ? 'text-up' : 'text-down'}`}>
+              <div className={`whitespace-nowrap text-2xl font-mono font-bold ${isUp ? 'text-up' : 'text-down'}`}>
                 ¥{merged.current?.toFixed(2) || '-'}
               </div>
             </CardContent>
@@ -150,7 +151,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
               <CardTitle className="text-xs text-fg-3 font-normal">持仓成本</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-mono font-bold text-yellow-400">
+              <div className="whitespace-nowrap text-2xl font-mono font-bold text-yellow-400">
                 {/* cost 是 Prisma Decimal，序列化后为字符串，先转 Number */}
                 ¥{merged.cost ? Number(merged.cost).toFixed(3) : '-'}
               </div>
@@ -162,7 +163,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
               <CardTitle className="text-xs text-fg-3 font-normal">成交量</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-mono font-bold">
+              <div className="whitespace-nowrap text-2xl font-mono font-bold">
                 {formatVolume(merged.volume)}
               </div>
             </CardContent>
@@ -173,7 +174,7 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
               <CardTitle className="text-xs text-fg-3 font-normal">流通市值</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-mono font-bold">
+              <div className="whitespace-nowrap text-2xl font-mono font-bold">
                 {formatMarketValue(circulationValue)}
               </div>
             </CardContent>
@@ -181,31 +182,31 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <BarChart3 className="w-4 h-4 text-fg-3" />
             <span className="text-fg-3">今开:</span>
             <span className="font-mono">¥{merged.open?.toFixed(2)}</span>
           </div>
 
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <DollarSign className="w-4 h-4 text-fg-3" />
             <span className="text-fg-3">昨收:</span>
             <span className="font-mono">¥{merged.close?.toFixed(2)}</span>
           </div>
 
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <TrendingUp className="w-4 h-4 text-up" />
             <span className="text-fg-3">最高:</span>
             <span className="font-mono text-up">¥{merged.high?.toFixed(2)}</span>
           </div>
 
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <TrendingDown className="w-4 h-4 text-down" />
             <span className="text-fg-3">最低:</span>
             <span className="font-mono text-down">¥{merged.low?.toFixed(2)}</span>
           </div>
 
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <Activity className="w-4 h-4 text-fg-3" />
             <span className="text-fg-3">振幅:</span>
             <span className="font-mono">{amplitude > 0 ? `${amplitude.toFixed(2)}%` : '-'}</span>
@@ -221,9 +222,9 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
           </div>
         )}
 
-        {/* K线 / 筹码分布 / 相关资讯 */}
-        <div className="mt-6">
-          <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
+        {/* K线 / 筹码分布 / 相关资讯（超高时仅本内容块纵向滚动，弹窗壳不滚动） */}
+        <div className="mt-6 flex min-h-0 flex-1 flex-col">
+          <Tabs value={tab} onValueChange={handleTabChange} className="w-full flex-none">
             <TabsList className="mb-4">
               <TabsTrigger value="kline" className="gap-1">
                 <BarChart3 className="w-4 h-4" /> K线走势
@@ -237,30 +238,32 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
             </TabsList>
           </Tabs>
 
-          <div className={tab === 'kline' ? '' : 'hidden'}>
-            <StockChart
-              code={merged.code}
-              market={merged.market || 'sh'}
-              name={merged.name}
-            />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className={tab === 'kline' ? '' : 'hidden'}>
+              <StockChart
+                code={merged.code}
+                market={merged.market || 'sh'}
+                name={merged.name}
+              />
+            </div>
+            {visited.has('chips') && (
+              <div className={tab === 'chips' ? '' : 'hidden'}>
+                <StockChips
+                  code={merged.code}
+                  market={merged.market || 'sh'}
+                  currentPrice={merged.current}
+                />
+              </div>
+            )}
+            {visited.has('news') && (
+              <div className={tab === 'news' ? '' : 'hidden'}>
+                <StockNews
+                  code={merged.code}
+                  market={merged.market || 'sh'}
+                />
+              </div>
+            )}
           </div>
-          {visited.has('chips') && (
-            <div className={tab === 'chips' ? '' : 'hidden'}>
-              <StockChips
-                code={merged.code}
-                market={merged.market || 'sh'}
-                currentPrice={merged.current}
-              />
-            </div>
-          )}
-          {visited.has('news') && (
-            <div className={tab === 'news' ? '' : 'hidden'}>
-              <StockNews
-                code={merged.code}
-                market={merged.market || 'sh'}
-              />
-            </div>
-          )}
         </div>
       </DialogContent>
     </Dialog>
