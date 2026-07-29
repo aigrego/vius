@@ -10,6 +10,7 @@ import { applyUpColor, type UpColorPref } from '@/lib/updown';
 import { LhbManageTab } from './lhb-manage-tab';
 import { NewsManageTab } from './news-manage-tab';
 import { PermMatrixTab } from './perm-matrix-tab';
+import { RealtimeManageTab } from './realtime-manage-tab';
 import { RolesDictTab } from './roles-dict-tab';
 import { UsersManageTab } from './users-manage-tab';
 
@@ -73,7 +74,7 @@ function Row({
 export default function SettingsPage() {
   const [theme, setTheme] = React.useState<ThemePref>('light');
   const [prefs, setPrefs] = React.useState<Prefs>(DEFAULT_PREFS);
-  const [tab, setTab] = React.useState<'prefs' | 'users' | 'perms' | 'roles' | 'lhb' | 'news'>('prefs');
+  const [tab, setTab] = React.useState<'prefs' | 'users' | 'perms' | 'roles' | 'lhb' | 'news' | 'realtime'>('prefs');
   const [role, setRole] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -127,6 +128,9 @@ export default function SettingsPage() {
           <SegBtn active={tab === 'news'} onClick={() => setTab('news')}>资讯管理</SegBtn>
         )}
         {role === 'admin' && (
+          <SegBtn active={tab === 'realtime'} onClick={() => setTab('realtime')}>行情管理</SegBtn>
+        )}
+        {role === 'admin' && (
           <SegBtn active={tab === 'lhb'} onClick={() => setTab('lhb')}>龙虎榜管理</SegBtn>
         )}
       </div>
@@ -135,6 +139,8 @@ export default function SettingsPage() {
         <LhbManageTab />
       ) : tab === 'news' && role === 'admin' ? (
         <NewsManageTab />
+      ) : tab === 'realtime' && role === 'admin' ? (
+        <RealtimeManageTab />
       ) : tab === 'users' && role === 'admin' ? (
         <UsersManageTab />
       ) : tab === 'perms' && role === 'admin' ? (

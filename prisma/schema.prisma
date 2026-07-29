@@ -218,6 +218,20 @@ model NewsSource {
   @@map("news_source")
 }
 
+// 实时行情数据源（key 标识解析器：sina / tencent / eastmoney；fetchRealtimeQuotes 按 sort 升序只循环启用源）
+model RealtimeSource {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique @db.VarChar(20) // sina / tencent / eastmoney
+  name        String   @db.VarChar(50)
+  sort        Int      @default(0) // 降级顺序，越小越优先
+  enabled     Boolean  @default(true)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@map("realtime_source")
+}
+
 // 行情总览三排卡片缓存（indices 为全局 userId='*'，positions/watchlist 按用户隔离）
 model OverviewCache {
   id        Int      @id @default(autoincrement())

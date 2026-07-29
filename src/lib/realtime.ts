@@ -1,3 +1,5 @@
+import { listEnabledRealtimeSources, listRealtimeSources, ensureDefaultRealtimeSources } from '@/model/RealtimeSource';
+
 export interface RealtimeQuote {
   code: string;
   name: string;
@@ -204,7 +206,40 @@ function inferMarket(code: string): string {
   return 'us';
 }
 
-// 主数据获取函数 - 带失败重试和多源切换
+// key → 解析器分派（realtime_source.key 白名单）
+const FETCHERS: Record<string, (codes: string[], markets: string[]) => Promise<Record<string, RealtimeQuote>>> = {
+  sina: fetchFromSina,
+  tencent: fetchFromTencent,
+  eastmoney: fetchFromEastMoney
+};
+
+// 启用源清单的进程内缓存（行情调用频繁，不能每次都查库；仿 route-perm 的 10s TTL）
+const SOURCE_CACHE_TTL_MS = 10_000;
+let sourceCache: { expires: number; sources: { name: string; fetch: (codes: string[], markets: string[]) => Promise<Record<string, RealtimeQuote>> }[] } | null = null;
+
+// 读 realtime_source 的启用源（sort 升序 = 降级顺序）；空表自动补默认三源；
+// 全部停用视为配置失误，兜底用全量源，避免行情整体瘫痪
+async function getEnabledSources() {
+  if (sourceCache && sourceCache.expires > Date.now()) return sourceCache.sources;
+
+  let rows = await listEnabledRealtimeSources();
+  if (rows.length === 0) {
+    await ensureDefaultRealtimeSources();
+    rows = await listEnabledRealtimeSources();
+    if (rows.length === 0) {
+      console.warn('[realtime] realtime_source 全部停用，兜底使用全部内置源');
+      rows = await listRealtimeSources();
+    }
+  }
+
+  const sources = rows
+    .map(r => ({ name: r.key, fetch: FETCHERS[r.key] }))
+    .filter((s): s is { name: string; fetch: (typeof FETCHERS)[string] } => !!s.fetch);
+  sourceCache = { expires: Date.now() + SOURCE_CACHE_TTL_MS, sources };
+  return sources;
+}
+
+// 主数据获取函数 - 带失败重试和多源切换（只循环 realtime_source 中启用的源）
 // marketHints 可选：调用方（如 stock-pool）已知的 DB market 字段，优先于代码前缀推断
 export async function fetchRealtimeQuotes(codes: string[], marketHints?: string[]): Promise<RealtimeQuote[]> {
   if (codes.length === 0) return [];
@@ -214,11 +249,7 @@ export async function fetchRealtimeQuotes(codes: string[], marketHints?: string[
     ? marketHints
     : codes.map(inferMarket);
 
-  const sources = [
-    { name: 'sina', fetch: fetchFromSina },
-    { name: 'tencent', fetch: fetchFromTencent },
-    { name: 'eastmoney', fetch: fetchFromEastMoney }
-  ];
+  const sources = await getEnabledSources();
 
   let lastError: Error | null = null;
 
@@ -226,16 +257,17 @@ export async function fetchRealtimeQuotes(codes: string[], marketHints?: string[
     try {
       console.log(`Trying data source: ${source.name}`);
       const data = await source.fetch(codes, markets);
-      
+
       const validCodes = Object.keys(data).length;
       if (validCodes > 0) {
         console.log(`✅ Data source ${source.name} returned ${validCodes} stocks`);
         return Object.values(data);
       }
-      
+
       console.warn(`⚠️ Data source ${source.name} returned empty`);
     } catch (error) {
-      console.warn(`❌ Data source ${source.name} failed:`, error);
+      // 只打 message：TimeoutError 等 DOMException 整体打印会刷一屏无信息量的属性表
+      console.warn(`❌ Data source ${source.name} failed: ${(error as Error)?.message ?? error}`);
       lastError = error as Error;
     }
   }

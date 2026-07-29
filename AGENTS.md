@@ -52,7 +52,7 @@ src/
 │   │   ├── ashare/            # A股总览
 │   │   ├── lhb/               # 龙虎榜（榜单 + 行展开席位）
 │   │   ├── profile/           # 个人资料（资料/安全：多邮箱、改密、OAuth 绑定）
-│   │   ├── settings/          # 设置（偏好 + admin 专属「用户管理」/「权限矩阵」/「角色字典」/「资讯管理」/「龙虎榜管理」tab）
+│   │   ├── settings/          # 设置（偏好 + admin 专属「用户管理」/「权限矩阵」/「角色字典」/「资讯管理」/「行情管理」/「龙虎榜管理」tab）
 │   │   ├── cron/              # 定时任务管理（仅 admin）
 │   │   ├── agent/             # Agent 接入（占位页）
 │   │   └── page.tsx           # redirect /dashboard
@@ -62,7 +62,7 @@ src/
 │   ├── api/users/             # 用户管理 API（admin 专属，requireAdmin；invitations/ 为邀请白名单）
 │   ├── api/roles/             # 角色字典 API（admin 专属）
 │   ├── api/permissions/       # 权限矩阵 API（admin 专属）
-│   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates/ 板块缓存（读 plate_cache）+ overview/ 总览三排卡片
+│   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates/ 板块缓存（读 plate_cache）+ overview/ 总览三排卡片 + manage/sources 行情数据源管理（admin）
 │   ├── api/cron/              # 定时任务管理 API（admin 专属，require-admin.ts 鉴权）
 │   ├── api/news/              # 资讯管理 API（manage/* 为 admin 数据源管理）
 │   ├── api/lhb/               # 龙虎榜 API（列表/seats；manage/* 为 admin 数据源管理）
@@ -79,7 +79,7 @@ src/
 │   ├── session.ts / env.ts / password.ts     # 认证三件套
 │   ├── route-perm.ts                          # RBAC 路由权限（治理路由清单 / getRouteLevels / requireRouteAccess）
 │   ├── prisma.ts                              # 单例（默认导出 + 具名导出共存）
-│   ├── realtime.ts / eastmoney.ts             # 实时行情三源降级 / 东财采集（多镜像 + 腾讯兜底）
+│   ├── realtime.ts / eastmoney.ts             # 实时行情多源降级（realtime_source 表驱动，只循环启用源）/ 东财采集（多镜像 + 腾讯兜底）
 │   ├── lhb.ts                                 # 东财 datacenter 龙虎榜封装（榜单 RPT_DAILYBILLBOARD_DETAILS + 席位 BUY/SELL）
 │   ├── stock-resolver.ts                      # 代码→名称/市场/类型 自动解析（stock_basic 优先，行情兜底）
 │   ├── technical.ts / alerts.ts / feishu.ts   # 指标计算 / 告警判定 / 飞书推送
@@ -112,6 +112,7 @@ src/
 - **页面路由**（2026-07 改名）：`/dashboard` 行情总览、`/pool` 股票池、`/positions` 持仓股、`/ashare` A股总览、`/analysis` 放量信号；`/stock/[code]` 详情页保留不动；旧路径由 `next.config.ts` 的 redirects 做 307 兼容跳转；`/stock-pool/api/*` 接口路径未动
 - **涨跌配色**：行情涨跌一律用语义类 `text-up`/`text-down`/`bg-up`/`bg-down`/`border-up`/`border-down`（`globals.css` 的 `--up`/`--down` 运行时变量，默认红涨绿跌；`:root[data-up-color='green']` 互换为绿涨红跌）。偏好在设置页「通用-涨跌配色」，存 `localStorage('vius-prefs').upColor`，helper 在 `src/lib/updown.ts`，anti-flash 在 `layout.tsx` 内联脚本；语义红绿（删除/停牌/获利盘等）仍用原 Tailwind 色
 - **行情总览三排卡片**：`GET /api/stocks/overview` 无参只读 `overview_cache` 缓存秒回（indices 全局 `user_id='*'`，positions/watchlist 按用户）；`?refresh=1` 重算+upsert（指数与用户股票各一次批量行情调用）。前端 `dashboard/Overview.tsx`：开页先渲染缓存，再 refresh 更新，之后 10s 轮询。持仓排按 code 汇总（`avgCost=Σ(price×qty)/Σqty`，`pnl=(current−avgCost)×totalQty`）；股票池排「关注后涨跌幅」基于 `watchlist.mark_price`（关注时价格，创建时记录、存量 null 懒回填），「资讯关联」=近 7 天 `news_flash.codes` 匹配条数
+- **行情数据源管理**：`realtime_source` 表（key=sina/tencent/eastmoney，解析器固定在 `realtime.ts`，只启停/排序不增删）；`fetchRealtimeQuotes` 按 `sort` 升序**只循环启用源**，启用清单带 10s 进程缓存（启停最长 10s 生效）；空表自动补默认三源，**全部停用视为配置失误兜底用全量源**；管理面=设置页「行情管理」tab + `/api/stocks/manage/sources`（requireAdmin）
 - **定时任务注册表**：`scheduler.ts` 的 `JOBS`（daily-close/intraday-alerts/sync-news/sync-lhb/sync-plates）是唯一任务来源；`cron_job` 表存 cron/enabled 覆盖（仅改过的有行），`cron_run` 表存每次运行记录；运行时改 cron 走 `rescheduleJob()`（validate→destroy 旧 task→重排），手动触发走 `triggerJob()`（进程内 Set 互斥防重入）
 - **注释以中文为主**；路径别名 `@/* → ./src/*`
 - **无测试框架**；`test/*.http` 用 REST Client 手动测
