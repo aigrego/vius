@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LogoMark } from '@/components/Logo';
+import { Github } from 'lucide-react';
 
 const ERROR_MESSAGES: Record<string, string> = {
   feishu: '飞书登录失败，请重试',
@@ -13,6 +14,18 @@ const ERROR_MESSAGES: Record<string, string> = {
   invite: '该邮箱未被邀请，请联系管理员邀请后重试',
   noemail: '无法从第三方账号获取邮箱，请检查该账号的邮箱设置后重试',
 };
+
+// 飞书/Lark 品牌角标（与 profile 页「已绑定登录方式」同款的「飞」字圆形标）
+function FeishuMark() {
+  return (
+    <span
+      className="grid h-[18px] w-[18px] flex-none place-items-center rounded-full text-[10px] font-bold text-white"
+      style={{ background: 'var(--brand-blue)' }}
+    >
+      飞
+    </span>
+  );
+}
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -122,6 +135,7 @@ function LoginForm() {
                   window.location.href = '/api/auth/feishu/login';
                 }}
               >
+                <FeishuMark />
                 飞书登录
               </Button>
             )}
@@ -134,6 +148,7 @@ function LoginForm() {
                   window.location.href = '/api/auth/lark/login';
                 }}
               >
+                <FeishuMark />
                 Lark 登录
               </Button>
             )}
@@ -146,6 +161,7 @@ function LoginForm() {
                   window.location.href = '/api/auth/github/login';
                 }}
               >
+                <Github size={16} className="flex-none" />
                 GitHub 登录
               </Button>
             )}
