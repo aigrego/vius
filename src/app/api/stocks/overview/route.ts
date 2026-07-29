@@ -181,7 +181,7 @@ async function buildWatchlist(watchlist: Watchlist[], quoteByCode: Map<string, R
 // ?refresh=1：重算三排并 upsert 缓存；失败的排回退旧缓存并在 message 中说明
 async function refresh(uid: string): Promise<{ data: OverviewData; notes: string[] }> {
   const [positions, watchlistRows] = await Promise.all([
-    prisma.position.findMany({ where: { userId: uid } }),
+    prisma.position.findMany({ where: { userId: uid, status: 'holding' } }),
     prisma.watchlist.findMany({ where: { userId: uid }, orderBy: { createdAt: 'desc' } }),
   ]);
 

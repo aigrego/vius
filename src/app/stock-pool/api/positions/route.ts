@@ -34,7 +34,8 @@ export async function GET() {
     // Decimal 序列化为字符串，统一转成 number 方便前端直接计算
     const data = positions.map(p => ({
       ...p,
-      price: Number(p.price)
+      price: Number(p.price),
+      sellPrice: p.sellPrice === null ? null : Number(p.sellPrice)
     }));
 
     return NextResponse.json({ success: true, data });

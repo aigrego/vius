@@ -52,10 +52,10 @@ export async function PUT(
       );
     }
 
-    // updateMany + userId 条件：天然限定归属，count=0 即记录不存在
+    // updateMany + userId + status='holding' 条件：天然限定归属，已卖出记录不可编辑（count=0 即不存在或已卖出）
     const [updated] = await prisma.$transaction([
       prisma.position.updateMany({
-        where: { id: positionId, userId: session.uid },
+        where: { id: positionId, userId: session.uid, status: 'holding' },
         data: { price: priceNum, quantity: quantityNum }
       }),
       prisma.auditLog.create({
@@ -69,7 +69,7 @@ export async function PUT(
 
     if (updated.count === 0) {
       return NextResponse.json(
-        { success: false, error: 'Position not found' },
+        { success: false, error: 'Position not found or already sold' },
         { status: 404 }
       );
     }

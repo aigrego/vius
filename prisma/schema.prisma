@@ -97,11 +97,15 @@ model Position {
   market    String   @db.VarChar(10)
   price     Decimal  @db.Decimal(10, 4) // 买入价
   quantity  Int // 买入数量（股）
+  status    String   @default("holding") @db.VarChar(10) // holding 持仓中 / sold 已卖出
+  sellPrice Decimal? @map("sell_price") @db.Decimal(10, 4) // 卖出价（sold 时必填）
+  soldAt    DateTime? @map("sold_at") @db.Timestamp(0) // 卖出时间
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, code])
+  @@index([userId, status])
   @@map("position")
 }
 

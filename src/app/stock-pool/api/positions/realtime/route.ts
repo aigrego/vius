@@ -27,9 +27,9 @@ export async function GET() {
       throw e;
     }
 
-    // 持仓记录涉及的去重股票代码（market 为建仓时解析的结果，作为行情源提示）
+    // 持仓中记录涉及的去重股票代码（已卖出的不再拉行情；market 为建仓时解析的结果，作为行情源提示）
     const positions = await prisma.position.findMany({
-      where: { userId: session.uid },
+      where: { userId: session.uid, status: 'holding' },
       select: { code: true, market: true },
       distinct: ['code']
     });
