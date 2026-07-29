@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState, ComponentProps } from 'react';
-import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,7 +22,7 @@ import {
 import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
 import { RealtimeStock } from '@/hooks/useRealtimeData';
 import {
-  ArrowLeft, RefreshCw, Database, LineChart, TrendingUp, Newspaper,
+  RefreshCw, Database, LineChart, TrendingUp, Newspaper,
   Search, ChevronLeft, ChevronRight, DownloadCloud, Zap, Rss
 } from 'lucide-react';
 
@@ -281,18 +280,6 @@ export default function AshareOverviewPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/analysis">
-                <LineChart className="w-4 h-4 mr-2" />
-                市场分析
-              </Link>
-            </Button>
-            <Button variant="secondary" size="sm" asChild>
-              <Link href="/pool">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回股票池
-              </Link>
-            </Button>
             <Button variant="secondary" size="sm" onClick={fetchStats}>
               <RefreshCw className="w-4 h-4 mr-2" />
               刷新

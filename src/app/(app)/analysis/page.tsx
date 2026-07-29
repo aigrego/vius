@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState, ComponentProps } from 'react';
-import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,7 +15,7 @@ import {
 } from '@/components/ui/table';
 import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
 import { RealtimeStock } from '@/hooks/useRealtimeData';
-import { ArrowLeft, RefreshCw, TrendingUp, TrendingDown, CalendarDays, Database } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, CalendarDays } from 'lucide-react';
 
 // 信号类型：底部放量 / 顶部放量（与后端 stock_signal.type 一致）
 type SignalType = 'bottom_volume' | 'top_volume';
@@ -173,18 +172,6 @@ export default function StockPoolAnalysisPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/ashare">
-                <Database className="w-4 h-4 mr-2" />
-                A股总览
-              </Link>
-            </Button>
-            <Button variant="secondary" size="sm" asChild>
-              <Link href="/pool">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回股票池
-              </Link>
-            </Button>
             <Button
               variant="secondary"
               size="sm"

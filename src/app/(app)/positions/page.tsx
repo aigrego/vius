@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,8 +21,8 @@ import { Position } from '@/types/stock-pool/position';
 import { useRealtimeData } from '@/hooks/useRealtimeData';
 import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
 import {
-  Plus, Search, RefreshCw, TrendingUp, Wallet, BarChart3, ListChecks,
-  Edit2, Trash2, Activity, Clock, Database
+  Plus, Search, RefreshCw, TrendingUp, Wallet, BarChart3,
+  Edit2, Trash2, Activity, Clock
 } from 'lucide-react';
 
 export default function PositionsPage() {
@@ -191,22 +190,6 @@ export default function PositionsPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* 股票池入口 */}
-            <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/pool">
-                <ListChecks className="w-4 h-4 mr-2" />
-                股票池
-              </Link>
-            </Button>
-
-            {/* A股数据总览入口 */}
-            <Button variant="secondary" size="sm" asChild className="hidden sm:flex">
-              <Link href="/ashare">
-                <Database className="w-4 h-4 mr-2" />
-                A股总览
-              </Link>
-            </Button>
-
             {/* 实时数据状态 */}
             <div
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${
