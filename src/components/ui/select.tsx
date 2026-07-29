@@ -1,14 +1,16 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-/* 受控 Select（简单原生实现：容器 + 绝对定位选项浮层，复用 token 样式）。
-   - Select：受控 value/onValueChange，管理展开状态
+/* 受控 Select（原生实现：容器 + portal 到 body 的 fixed 选项浮层，复用 token 样式）。
+   - Select：受控 value/onValueChange，管理展开状态与浮层定位
    - SelectTrigger：显示当前选中项的文案（选项通过 context 注册 label，
      关闭态也能正确回显）
-   - SelectContent：选项浮层（始终挂载、关闭时 hidden，保证 label 注册）
+   - SelectContent：选项浮层（portal + fixed 定位，避免被 Table 的 overflow-auto
+     或 Dialog 的 transform 祖先裁剪；始终挂载、关闭时 display:none，保证 label 注册）
    - SelectItem：value + children（children 即回显文案） */
 
 interface SelectCtxValue {
@@ -18,6 +20,9 @@ interface SelectCtxValue {
   setOpen: (open: boolean) => void;
   labels: Map<string, React.ReactNode>;
   registerLabel: (value: string, label: React.ReactNode) => void;
+  // 浮层引用（外部点击判定）与视口定位（打开时按 trigger 计算）
+  contentRef: React.RefObject<HTMLDivElement | null>;
+  pos: { top: number; left: number; width: number } | null;
 }
 
 const SelectCtx = React.createContext<SelectCtxValue | null>(null);
@@ -37,7 +42,9 @@ export interface SelectProps {
 function Select({ value, onValueChange, children }: SelectProps) {
   const [open, setOpen] = React.useState(false);
   const rootRef = React.useRef<HTMLDivElement>(null);
+  const contentRef = React.useRef<HTMLDivElement>(null);
   const labelsRef = React.useRef<Map<string, React.ReactNode>>(new Map());
+  const [pos, setPos] = React.useState<SelectCtxValue['pos']>(null);
   // 仅用于 label 注册后触发 trigger 重渲染
   const [, bump] = React.useReducer((x: number) => x + 1, 0);
 
@@ -49,10 +56,29 @@ function Select({ value, onValueChange, children }: SelectProps) {
     bump();
   }, []);
 
+  // 打开时按 trigger 的视口坐标定位浮层；滚动（capture 含嵌套滚动容器）/缩放时重算
+  React.useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 6, left: r.left, width: r.width });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open]);
+
   React.useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      // 浮层已 portal 出容器，点击 trigger 容器或浮层内部都不算外部点击
+      if (rootRef.current?.contains(t) || contentRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -67,7 +93,7 @@ function Select({ value, onValueChange, children }: SelectProps) {
 
   return (
     <SelectCtx.Provider
-      value={{ value, onValueChange, open, setOpen, labels: labelsRef.current, registerLabel }}
+      value={{ value, onValueChange, open, setOpen, labels: labelsRef.current, registerLabel, contentRef, pos }}
     >
       <div ref={rootRef} className="relative inline-block">
         {children}
@@ -108,17 +134,31 @@ SelectTrigger.displayName = 'SelectTrigger';
 const SelectContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, style, ...props }, ref) => {
     const ctx = useSelectCtx();
-    return (
+    // portal 到 body：彻底逃离 overflow/transform 祖先（Table 滚动容器、Dialog 位移变换），
+    // 浮层不会被裁剪。始终挂载（关闭时 display:none），SelectItem 的 label 注册不中断
+    if (typeof document === 'undefined') return null;
+    return createPortal(
       <div
-        ref={ref}
+        ref={(node) => {
+          ctx.contentRef.current = node;
+          if (typeof ref === 'function') ref(node);
+          else if (ref) ref.current = node;
+        }}
         className={cn(
-          'absolute left-0 top-full z-[2100] mt-1.5 max-h-[60vh] min-w-full overflow-y-auto rounded-[10px] border border-border bg-surface p-1.5 shadow-3 outline-none animate-popIn',
-          !ctx.open && 'hidden',
+          'z-[2100] max-h-[60vh] overflow-y-auto rounded-[10px] border border-border bg-surface p-1.5 shadow-3 outline-none animate-popIn',
           className,
         )}
-        style={style}
+        style={{
+          position: 'fixed',
+          top: ctx.pos?.top ?? -9999,
+          left: ctx.pos?.left ?? -9999,
+          minWidth: ctx.pos?.width,
+          ...(ctx.open ? undefined : { display: 'none' }),
+          ...style,
+        }}
         {...props}
-      />
+      />,
+      document.body,
     );
   },
 );
