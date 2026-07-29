@@ -4,6 +4,7 @@
 import { fetchLhbDay } from '@/lib/lhb';
 import { replaceLhbDay } from '@/model/Lhb';
 import { listEnabledLhbSources, createLhbSource, markLhbSourceSync } from '@/model/LhbSource';
+import { tradingDaysBetween } from '@/lib/trading-days';
 
 // 东财 datacenter 接口地址（数据源记录的 url 缺省时用此默认值）
 const EASTMONEY_DC_URL = 'https://datacenter-web.eastmoney.com/api/data/v1/get';
@@ -38,6 +39,13 @@ export const syncLhb = async (dateStr?: string): Promise<{ date: string; stocks:
     try {
       // 目前仅支持东财 datacenter 格式（type=api）
       const day = await fetchLhbDay(date);
+      // 空榜保护：非交易日/接口异常返回空时跳过写入
+      //（replaceLhbDay 为先删后插，空写会误清该日已有数据）
+      if (day.stocks.length === 0) {
+        console.log(`[sync-lhb] ${date} 无上榜数据（非交易日或接口空响应），跳过写入`);
+        await markLhbSourceSync(source.id, 'success', 0);
+        continue;
+      }
       const written = await replaceLhbDay(date, day.stocks, day.seats);
       await markLhbSourceSync(source.id, 'success', written.stocks);
       stocks = written.stocks;
@@ -49,4 +57,38 @@ export const syncLhb = async (dateStr?: string): Promise<{ date: string; stocks:
     }
   }
   return { date, stocks, seats };
+};
+
+export interface LhbRangeDayResult {
+  date: string;
+  stocks?: number;
+  seats?: number;
+  skipped?: boolean; // 空榜日（非交易日），未写入
+  error?: string;
+}
+
+// 按日期区间回补龙虎榜：逐工作日调用单日同步，日间 sleep 1s 防限流；
+// 单日失败记录后继续，不中断整个区间（依赖 syncLhb 的空榜保护，空榜日记 skipped）
+export const syncLhbRange = async (
+  from: string,
+  to: string
+): Promise<{ from: string; to: string; total: number; synced: number; detail: LhbRangeDayResult[] }> => {
+  const days = tradingDaysBetween(from, to);
+  const detail: LhbRangeDayResult[] = [];
+  for (const date of days) {
+    try {
+      const r = await syncLhb(date);
+      detail.push(r.stocks === 0 ? { date, skipped: true } : { date, stocks: r.stocks, seats: r.seats });
+    } catch (error) {
+      detail.push({ date, error: (error as Error)?.message ?? String(error) });
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  return {
+    from,
+    to,
+    total: days.length,
+    synced: detail.filter(d => !d.error && !d.skipped).length,
+    detail
+  };
 };

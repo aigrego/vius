@@ -8,7 +8,7 @@ import {
   runWithConcurrency
 } from '@/lib/eastmoney';
 import { upsertStockBasics, markInactiveExcept, getStockBasicMap } from '@/model/StockBasic';
-import { upsertStockDailies, getCodesMissingDaily, getCodesWithInsufficientHistory } from '@/model/StockDaily';
+import { upsertStockDailies, getCodesMissingDaily, getCodesWithInsufficientHistory, getCodesMissingInRange } from '@/model/StockDaily';
 
 // 取北京时间的 YYYY-MM-DD（A股交易日以北京时间为准，与服务器时区解耦）
 export const getBeijingDateStr = (d: Date = new Date()): string =>
@@ -92,4 +92,33 @@ export const syncDailyStocks = async (options: {
   }
 
   return { stocks: stocksCount, dailies: dailiesCount, backfilled };
+};
+
+// 按日期区间回补日行情：只补「区间内有缺漏」的活跃股（缺漏判定见 getCodesMissingInRange），
+// 不动清单与当日快照；与每日任务同款并发护栏（并发 2 + 批间 800ms）防东财封 IP，
+// 每股拉 250 根历史靠 code+date 唯一约束幂等落库（skipDuplicates）
+export const backfillDailyRange = async (
+  from: string,
+  to: string
+): Promise<{ from: string; to: string; missing: number; backfilled: number }> => {
+  const backfillCodes = await withDbRetry(() => getCodesMissingInRange(from, to));
+  console.log(`[sync-daily] 区间 ${from}~${to} 日线缺漏股票：${backfillCodes.length} 只`);
+  if (backfillCodes.length === 0) return { from, to, missing: 0, backfilled: 0 };
+
+  const basicMap = await withDbRetry(() => getStockBasicMap());
+  let backfilled = 0;
+  await runWithConcurrency(backfillCodes, 2, async code => {
+    try {
+      const market = basicMap.get(code)?.market ?? 'sh';
+      const bars = await fetchHistoryKline(code, market, 250);
+      if (bars.length === 0) return;
+      await upsertStockDailies(bars);
+      backfilled += 1;
+    } catch (error) {
+      // 单股失败不影响整体
+      console.error(`[sync-daily] ${code} 区间回补失败:`, error);
+    }
+  }, 800);
+  console.log(`[sync-daily] 区间回补完成：${backfilled}/${backfillCodes.length} 只`);
+  return { from, to, missing: backfillCodes.length, backfilled };
 };

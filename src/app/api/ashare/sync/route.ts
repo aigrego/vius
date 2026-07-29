@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRouteAccess } from '@/lib/route-perm';
-import { syncDailyStocks } from '@/lib/jobs/sync-daily';
+import { syncDailyStocks, backfillDailyRange } from '@/lib/jobs/sync-daily';
 import { syncNews } from '@/lib/jobs/sync-news';
-import { syncLhb } from '@/lib/jobs/sync-lhb';
+import { syncLhb, syncLhbRange } from '@/lib/jobs/sync-lhb';
 import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
 import { getLatestDailyDate } from '@/model/StockDaily';
+import { parseDateRange } from '@/lib/trading-days';
 
 // 声明为动态路由
 export const dynamic = 'force-dynamic';
 
 const VALID_TYPES = ['daily', 'news', 'signals', 'lhb', 'all'];
 
+// 单次区间回补的最长跨度（按天/按周场景足够；防一次回补拖垮数据源）
+const MAX_RANGE_DAYS = 31;
+
 // POST /api/ashare/sync?type=daily|news|signals|lhb|all - 手动触发同步任务（需登录）
 // type=all 时按 daily → signals 顺序执行（信号依赖当日日线），news 独立执行，lhb 不参与 all
+// 区间回补：type=daily|lhb 时 from=YYYY-MM-DD&to=YYYY-MM-DD 按区间补缺（lhb 逐工作日，daily 只补缺漏股）
 export const POST = async (request: NextRequest) => {
   try {
     // 鉴权：优先 CRON_SECRET（供外部 cron/脚本调用），其次登录 session（需 /ashare 写权限）
@@ -35,13 +40,32 @@ export const POST = async (request: NextRequest) => {
 
     const result: Record<string, unknown> = {};
 
-    // 行情同步（daily / all）；codes=600519,000001 时只回补指定股票的历史K线（补缺/验证用）
+    // 区间参数（daily / lhb 的回补模式；其一缺/非法即 400）
+    const fromParam = searchParams.get('from')?.trim() || null;
+    const toParam = searchParams.get('to')?.trim() || null;
+    let range: { from: string; to: string } | null = null;
+    if (fromParam || toParam) {
+      const parsed = parseDateRange(fromParam, toParam, MAX_RANGE_DAYS);
+      if ('error' in parsed) {
+        return NextResponse.json({ code: 400, data: null, message: parsed.error }, { status: 400 });
+      }
+      range = parsed;
+    }
+
+    // 行情同步（daily / all）；codes=600519,000001 时只回补指定股票的历史K线（补缺/验证用）；
+    // from+to 时按区间回补缺漏股日线（优先级：codes > 区间 > 常规同步）
     if (type === 'daily' || type === 'all') {
       const codesParam = searchParams.get('codes')?.trim();
       const codes = codesParam
         ? codesParam.split(',').map(c => c.trim()).filter(c => /^\d{6}$/.test(c))
         : undefined;
-      result.daily = await syncDailyStocks(codes && codes.length > 0 ? { onlyBackfillCodes: codes } : undefined);
+      if (codes && codes.length > 0) {
+        result.daily = await syncDailyStocks({ onlyBackfillCodes: codes });
+      } else if (range) {
+        result.daily = await backfillDailyRange(range.from, range.to);
+      } else {
+        result.daily = await syncDailyStocks();
+      }
     }
 
     // 信号检测（signals / all）：依赖当日日线，取库中最新日线日期
@@ -59,11 +83,15 @@ export const POST = async (request: NextRequest) => {
       result.news = await syncNews();
     }
 
-    // 龙虎榜同步（lhb）：date=YYYY-MM-DD 可指定日期，缺省为北京当日
+    // 龙虎榜同步（lhb）：from+to 按区间逐工作日回补；date=YYYY-MM-DD 指定单日，缺省为北京当日
     if (type === 'lhb') {
-      const dateParam = searchParams.get('date')?.trim();
-      const date = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : undefined;
-      result.lhb = await syncLhb(date);
+      if (range) {
+        result.lhb = await syncLhbRange(range.from, range.to);
+      } else {
+        const dateParam = searchParams.get('date')?.trim();
+        const date = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : undefined;
+        result.lhb = await syncLhb(date);
+      }
     }
 
     return NextResponse.json({

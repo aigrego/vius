@@ -60,6 +60,11 @@ export function LhbManageTab() {
   const [form, setForm] = React.useState<SourceForm>(EMPTY_FORM);
   const [saving, setSaving] = React.useState(false);
 
+  // 历史区间回补
+  const [bfFrom, setBfFrom] = React.useState('');
+  const [bfTo, setBfTo] = React.useState('');
+  const [backfilling, setBackfilling] = React.useState(false);
+
   const fetchAll = React.useCallback(async () => {
     try {
       setError(null);
@@ -85,6 +90,29 @@ export function LhbManageTab() {
   const flash = (msg: string) => {
     setNotice(msg);
     setTimeout(() => setNotice(null), 3000);
+  };
+
+  // 本地日期 YYYY-MM-DD（n 天前）
+  const localDateStr = (nDaysAgo = 0): string => {
+    const d = new Date(Date.now() - nDaysAgo * 86_400_000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  // 历史区间回补：逐工作日同步（走 /api/ashare/sync?type=lhb，空榜日自动跳过）
+  const handleBackfill = async () => {
+    setBackfilling(true);
+    try {
+      const res = await fetch(`/api/ashare/sync?type=lhb&from=${bfFrom}&to=${bfTo}`, { method: 'POST' });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json || json.code !== 200) throw new Error(json?.message || '回补失败');
+      const d = json.data?.lhb;
+      flash(d ? `回补完成：${d.total} 个工作日，成功 ${d.synced} 天` : '回补完成');
+      await fetchAll();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBackfilling(false);
+    }
   };
 
   const openAdd = () => {
@@ -272,6 +300,63 @@ export function LhbManageTab() {
             </Card>
           ))}
         </div>
+      </div>
+
+      {/* 历史区间回补（按天/按周补缺，单次最长 31 天，空榜日自动跳过） */}
+      <div>
+        <h3 className="mb-2 text-[14px] font-semibold text-fg-1">历史回补</h3>
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="date"
+                value={bfFrom}
+                onChange={e => setBfFrom(e.target.value)}
+                className="h-8 w-[150px] text-[12.5px]"
+              />
+              <span className="text-[12.5px] text-fg-3">至</span>
+              <Input
+                type="date"
+                value={bfTo}
+                onChange={e => setBfTo(e.target.value)}
+                className="h-8 w-[150px] text-[12.5px]"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={backfilling || !bfFrom || !bfTo}
+                onClick={handleBackfill}
+              >
+                {backfilling ? '回补中…' : '回补区间'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={backfilling}
+                onClick={() => { setBfFrom(localDateStr()); setBfTo(localDateStr()); }}
+              >
+                今天
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={backfilling}
+                onClick={() => { setBfFrom(localDateStr(7)); setBfTo(localDateStr()); }}
+              >
+                近一周
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={backfilling}
+                onClick={() => { setBfFrom(localDateStr(14)); setBfTo(localDateStr()); }}
+              >
+                近两周
+              </Button>
+              <span className="text-[12px] text-fg-3">逐工作日同步，非交易日自动跳过，单次最长 31 天</span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* 已有数据日期 */}

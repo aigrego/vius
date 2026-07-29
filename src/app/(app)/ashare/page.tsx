@@ -23,7 +23,7 @@ import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
 import { RealtimeStock } from '@/hooks/useRealtimeData';
 import {
   RefreshCw, Database, LineChart, TrendingUp, Newspaper,
-  Search, ChevronLeft, ChevronRight, DownloadCloud, Zap, Rss
+  Search, ChevronLeft, ChevronRight, DownloadCloud, Zap, Rss, History
 } from 'lucide-react';
 
 // 与 /api/ashare/stats 返回结构一致
@@ -77,6 +77,11 @@ export default function AshareOverviewPage() {
   // 手动同步
   const [syncing, setSyncing] = useState<SyncType | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  // 日行情区间回补（按天/按周补缺）
+  const [backfillFrom, setBackfillFrom] = useState('');
+  const [backfillTo, setBackfillTo] = useState('');
+  const [backfilling, setBackfilling] = useState(false);
 
   // Tab 切换（快讯 Tab 首次激活才请求）
   const [tab, setTab] = useState<TabKey>('stocks');
@@ -185,6 +190,35 @@ export default function AshareOverviewPage() {
       fetchNews();
     }
   }, [tab, fetchNews]);
+
+  // 日行情区间回补：只补区间内有缺漏的活跃股，单次最长 31 天
+  const runBackfill = async () => {
+    try {
+      setBackfilling(true);
+      setSyncMessage(null);
+      const params = new URLSearchParams({ type: 'daily', from: backfillFrom, to: backfillTo });
+      const res = await fetch(`/api/ashare/sync?${params.toString()}`, { method: 'POST' });
+      const result = await res.json().catch(() => null);
+      if (res.status === 401) {
+        setSyncMessage('请先登录后再执行同步');
+        return;
+      }
+      if (!res.ok || !result || result.code !== 200) {
+        throw new Error(result?.message || '回补失败');
+      }
+      const d = result.data?.daily;
+      setSyncMessage(
+        d
+          ? `区间回补完成：${d.from}~${d.to} 缺漏 ${d.missing} 只，回补成功 ${d.backfilled} 只`
+          : '回补完成'
+      );
+      fetchStats();
+    } catch (e) {
+      setSyncMessage(`回补失败：${(e as Error).message}`);
+    } finally {
+      setBackfilling(false);
+    }
+  };
 
   // 手动同步（浏览器 session 鉴权，401 提示登录）
   const runSync = async (type: SyncType) => {
@@ -402,6 +436,33 @@ export default function AshareOverviewPage() {
               <p className="text-xs text-fg-3">
                 「同步行情」只跑清单+快照+新股回补，全量历史回补由后台每日自动进行（需登录）。
               </p>
+            </div>
+            {/* 日行情区间回补：只补区间内缺漏的活跃股，单次最长 31 天 */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+              <span className="text-xs text-fg-3">日行情补缺：</span>
+              <Input
+                type="date"
+                value={backfillFrom}
+                onChange={(e) => setBackfillFrom(e.target.value)}
+                className="h-8 w-[150px] text-xs"
+              />
+              <span className="text-xs text-fg-3">至</span>
+              <Input
+                type="date"
+                value={backfillTo}
+                onChange={(e) => setBackfillTo(e.target.value)}
+                className="h-8 w-[150px] text-xs"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={runBackfill}
+                disabled={backfilling || syncing !== null || !backfillFrom || !backfillTo}
+              >
+                <History className={`w-4 h-4 mr-2 ${backfilling ? 'animate-spin' : ''}`} />
+                {backfilling ? '回补中...' : '回补区间'}
+              </Button>
+              <span className="text-xs text-fg-3">按天/按周补缺失日线，单次最长 31 天</span>
             </div>
             {syncMessage && (
               <div className="mt-3 text-sm text-fg-3 border border-border rounded-lg px-3 py-2 bg-bg">

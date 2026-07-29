@@ -112,6 +112,25 @@ export const getCodesWithInsufficientHistory = async (minBars: number): Promise<
   return actives.map(a => a.code).filter(code => (countMap.get(code) ?? 0) < minBars);
 };
 
+// 获取区间 [from, to] 内日线有缺漏的活跃股票代码（区间回补用）。
+// 以区间内单股最大条数近似区间交易日数（大多数股票全勤），少于它的即为缺漏；
+// 停牌股会被误判为缺漏，但回补拉不到停牌日 bar、upsert 幂等，无害
+export const getCodesMissingInRange = async (from: string, to: string): Promise<string[]> => {
+  const [actives, counts] = await Promise.all([
+    prisma.stockBasic.findMany({ where: { isActive: true }, select: { code: true } }),
+    prisma.stockDaily.groupBy({
+      by: ['code'],
+      where: { date: { gte: toUtcDate(from), lte: toUtcDate(to) } },
+      _count: { code: true }
+    })
+  ]);
+  const maxCount = Math.max(0, ...counts.map(c => c._count.code));
+  // 区间整体无数据：全量活跃股都需回补
+  if (maxCount === 0) return actives.map(a => a.code);
+  const countMap = new Map(counts.map(c => [c.code, c._count.code]));
+  return actives.map(a => a.code).filter(code => (countMap.get(code) ?? 0) < maxCount);
+};
+
 // 近 N 日平均成交量（单位为手），用于告警的量比计算
 export const getAvgVolume = async (code: string, days: number = 5): Promise<number | null> => {
   const rows = await prisma.stockDaily.findMany({
