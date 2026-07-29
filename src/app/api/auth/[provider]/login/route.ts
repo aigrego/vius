@@ -9,7 +9,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: s
   const raw = (await ctx.params).provider;
   const p = parseProvider(raw);
   if (!p || !providerConfigured(p)) {
-    return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(raw)}`, req.url), 302);
+    // 相对 Location：浏览器按当前地址解析，不依赖请求 Host（反代场景 Host 可能不准）
+    return new NextResponse(null, {
+      status: 302,
+      headers: { Location: `/login?error=${encodeURIComponent(raw)}` },
+    });
   }
   const session = await getSession();
   return NextResponse.redirect(

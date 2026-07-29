@@ -1,13 +1,14 @@
 import type { Prisma, User } from '@prisma/client';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { createSessionCookie, getSession } from '@/lib/session';
 import {
   fetchOAuthProfile as larkFetchOAuthProfile,
   providerAuthorizeUrl as larkAuthorizeUrl,
   providerConfigured as larkConfigured,
+  providerRedirectUri as larkRedirectUri,
 } from '@/server/lark';
-import { fetchGithubProfile, githubAuthorizeUrl, githubConfigured } from '@/server/github';
+import { fetchGithubProfile, githubAuthorizeUrl, githubConfigured, githubRedirectUri } from '@/server/github';
 import { isEmail, normalizeEmail, upsertOAuthEmail } from '@/server/user-emails';
 
 /* 三方 OAuth 统一门面：feishu / lark 转发 server/lark.ts，github 转发 server/github.ts；
@@ -55,9 +56,33 @@ export function providerIdColumn(p: OAuthProvider): 'larkUnionId' | 'githubId' {
   return p === 'github' ? 'githubId' : 'larkUnionId';
 }
 
+/* 站内跳转：给了 origin 就拼绝对地址，否则用相对 Location（浏览器按当前地址解析）。
+   注意不能信 req.url 的 Host：反代不透传 Host、Next dev server 强制 localhost 的场景下，
+   req.url 的主机名都不是用户浏览器里的真实地址。 */
+function redirectInApp(path: string, origin?: string): NextResponse {
+  return new NextResponse(null, {
+    status: 302,
+    headers: { Location: origin ? `${origin}${path}` : path },
+  });
+}
+
+/* 用户实际访问的公开 origin：取 provider 配置的 *_REDIRECT_URI 的 origin
+   （它必须是浏览器可达的地址，否则 OAuth 回调本身就到不了，天然可信）。
+   env 未配置时返回 undefined，调用方退化为相对 Location。 */
+export function publicOrigin(p: OAuthProvider): string | undefined {
+  const uri = p === 'github' ? githubRedirectUri('') : larkRedirectUri(p, '');
+  try {
+    const origin = new URL(uri).origin;
+    // env 未配置时 providerRedirectUri 退化为 `${origin}/api/...`，origin='' 会得到非法/空值
+    return origin && origin !== 'null' ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /* 统一失败出口：跳回登录页并带错误码（登录页 ERROR_MESSAGES 透出文案）。 */
-export function loginFail(req: NextRequest, provider: string): NextResponse {
-  return NextResponse.redirect(new URL(`/login?error=${provider}`, req.url), 302);
+export function loginFail(provider: string, origin?: string): NextResponse {
+  return redirectInApp(`/login?error=${provider}`, origin);
 }
 
 /* 邀请被并发消费时抛出，事务回滚后按「无邀请」处理。 */
@@ -98,9 +123,9 @@ async function pickUsername(
 }
 
 /* 签发 session cookie 并 302 到 /dashboard。 */
-async function loginWith(req: NextRequest, u: User): Promise<NextResponse> {
+async function loginWith(u: User, origin?: string): Promise<NextResponse> {
   const c = await createSessionCookie(u);
-  const res = NextResponse.redirect(new URL('/dashboard', req.url), 302);
+  const res = redirectInApp('/dashboard', origin);
   res.cookies.set(c.name, c.value, c.options);
   return res;
 }
@@ -121,27 +146,28 @@ async function loginWith(req: NextRequest, u: User): Promise<NextResponse> {
         随后签发 session → /dashboard。
    两种模式下，OAuth 带回的邮箱都会落 user_emails（source=provider）。 */
 export async function completeOAuthLogin(
-  req: NextRequest,
   provider: OAuthProvider,
   profile: UnifiedOAuthProfile,
   bindMode: boolean,
 ): Promise<NextResponse> {
   const col = providerIdColumn(provider);
+  // 登录后跳转的公开 origin（provider *_REDIRECT_URI 的 origin），取不到则相对 Location
+  const origin = publicOrigin(provider);
 
   // —— 绑定模式 ——
   if (bindMode) {
     const session = await getSession();
-    if (!session) return loginFail(req, provider);
+    if (!session) return loginFail(provider, origin);
     const holder = await findUserByProviderId(prisma, col, profile.providerUserId);
     if (holder && holder.id !== session.uid) {
-      return NextResponse.redirect(new URL('/profile?tab=security&error=bind', req.url), 302);
+      return redirectInApp('/profile?tab=security&error=bind', origin);
     }
     await prisma.user.update({
       where: { id: session.uid },
       data: { ...providerIdData(col, profile.providerUserId), avatarUrl: profile.avatarUrl ?? undefined },
     });
     if (profile.email) await upsertOAuthEmail(session.uid, profile.email, provider);
-    return NextResponse.redirect(new URL('/profile?tab=security', req.url), 302);
+    return redirectInApp('/profile?tab=security', origin);
   }
 
   // —— 登录模式 1)：provider id 已绑定 → 直接登录 ——
@@ -153,13 +179,13 @@ export async function completeOAuthLogin(
         ? await prisma.user.update({ where: { id: bound.id }, data: { avatarUrl } })
         : bound;
     if (profile.email) await upsertOAuthEmail(u.id, profile.email, provider);
-    return loginWith(req, u);
+    return loginWith(u, origin);
   }
 
   // —— 登录模式 2)：邮箱硬依赖 ——
   const email = profile.email ? normalizeEmail(profile.email) : '';
   if (!isEmail(email)) {
-    return NextResponse.redirect(new URL('/login?error=noemail', req.url), 302);
+    return redirectInApp('/login?error=noemail', origin);
   }
 
   // —— 登录模式 3)：邮箱命中已有用户的任一邮箱 → 免邀请绑定登录 ——
@@ -177,13 +203,13 @@ export async function completeOAuthLogin(
       },
     });
     await upsertOAuthEmail(u.id, email, provider);
-    return loginWith(req, u);
+    return loginWith(u, origin);
   }
 
   // —— 登录模式 4)：全新邮箱须命中 pending 邀请 ——
   const invitation = await prisma.invitation.findUnique({ where: { email } });
   if (!invitation || invitation.status !== 'pending') {
-    return NextResponse.redirect(new URL('/login?error=invite', req.url), 302);
+    return redirectInApp('/login?error=invite', origin);
   }
 
   // 建号/绑定与邀请接受放同一事务；邀请用条件更新消费，防并发重复放行。
@@ -230,11 +256,11 @@ export async function completeOAuthLogin(
     });
   } catch (e) {
     if (e instanceof InvitationConsumedError) {
-      return NextResponse.redirect(new URL('/login?error=invite', req.url), 302);
+      return redirectInApp('/login?error=invite', origin);
     }
     throw e;
   }
 
   await upsertOAuthEmail(user.id, email, provider);
-  return loginWith(req, user);
+  return loginWith(user, origin);
 }

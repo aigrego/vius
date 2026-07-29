@@ -92,7 +92,7 @@ src/
 ├── server/user-emails.ts      # 多邮箱辅助（回填/OAuth 邮箱落表/格式校验）
 ├── hooks/  types/  utils/
 ├── instrumentation.ts         # register() → scheduler
-└── middleware.ts              # cookie 存在性检查 + 安全响应头
+└── proxy.ts                   # cookie 存在性检查 + 安全响应头（Next 16 proxy 约定，原 middleware.ts）
 ```
 
 ## 关键约定
@@ -100,7 +100,7 @@ src/
 - **API 信封两套并存**（历史原因，新代码跟随所在模块）：
   - `/api/ashare/*` 与 `/api/auth/*`：`{code:200, data, message}`（成功 code=200）
   - `/stock-pool/api/*`：`{success:true, data}` / `{success:false, error}`
-- **鉴权**：API 内 `requireUser()`（抛 `UnauthorizedError` → 各路由按自家信封返回 401）；`POST /api/ashare/sync` 额外支持 `Authorization: Bearer $CRON_SECRET`。middleware 只查 cookie 存在性，真正校验在 API 层
+- **鉴权**：API 内 `requireUser()`（抛 `UnauthorizedError` → 各路由按自家信封返回 401）；`POST /api/ashare/sync` 额外支持 `Authorization: Bearer $CRON_SECRET`。proxy（`src/proxy.ts`）只查 cookie 存在性，真正校验在 API 层
 - **RBAC 路由权限**：角色存 `roles` 表（`users.role` = 角色 key；admin/member 内置不可删、key 不可改），各角色对 8 条治理路由（/dashboard /pool /positions /ashare /analysis /lhb /cron /agent）的权限档存 `role_route_permissions` 表，三档语义：`rw` 读写 / `ro` 只读（写操作 403「只读权限，无法执行此操作」）/ `hidden` 不可见（侧边栏隐藏入口 + 接口 403「无权限」）；/profile、/settings 恒定可见不入矩阵。**admin 恒全 rw 不查库**；member 默认 7 条 rw + /cron hidden，自定义角色默认全 ro，未配置的路由走默认档兜底。核心 `src/lib/route-perm.ts`（`GOVERNED_ROUTES` 清单 / `getRouteLevels(roleKey)` 带 10s 进程缓存 / `requireRouteAccess(route, { write? })` 仿 requireAdmin 风格，调用方 `if (x instanceof NextResponse) return x`）；强制点：`/stock-pool/api/*`（/pool /positions，alerts/check 虽 GET 按写校验）、`/api/ashare/*`（/ashare；signals→/analysis；sync 的 session 分支按写校验、Bearer CRON_SECRET 分支跳过）、`/api/lhb`（GET）；前端 Sidebar 按 `levels` 过滤入口、AuthGate 对 hidden 路由 `replace('/dashboard')`。管理面：设置页「用户管理 / 权限矩阵 / 角色字典」tab + `/api/users` `/api/roles` `/api/permissions`（均 requireAdmin），当前用户权限 `GET /api/auth/permissions`；权限矩阵保存后调 `clearRouteLevelCache()` 即时生效。注意：角色变更只影响新请求按 `users.role` 查库的部分，已签发 cookie 里的 role 不变（重新登录后刷新）
 - **股票池按账号隔离**：`watchlist.user_id`（`@@unique([userId, code])`，级联删除）；`/stock-pool/api/*` 全部按 `session.uid` 过滤；告警历史 `alert_history.user_id` 可空（存量为 null）。定时告警走 `runAlertCheckAll()` 按用户分组跑、飞书推送标题带归属用户名；手动「检查预警」只查当前用户
 - **持仓股**：`position` 表按 `user_id` 隔离，**同一 (userId, code) 允许多条**（买入价/数量不同）；新增走 `POST /stock-pool/api/positions`（code+price+quantity，名称/市场自动解析）；持仓实时行情走 `/stock-pool/api/positions/realtime`（与股票池 realtime 独立的 3s TTL 缓存，只拉 `status='holding'` 的代码）。**卖出**：`status`（holding/sold）+ `sell_price` + `sold_at` 三列，`POST /stock-pool/api/positions/[id]/sell`（body `{price, quantity?}`，quantity 缺省=全卖）；部分卖出拆行——原记录减量 + 新建同买入价的 sold 记录，已实现盈亏 = `(sellPrice−price)×quantity` 现算不冗余存储；审计 `audit_log` action `SELL`；dashboard 总览持仓排也只聚合 holding 行
