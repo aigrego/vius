@@ -112,11 +112,13 @@ async function loginWith(req: NextRequest, u: User): Promise<NextResponse> {
    登录模式（邀请门控，按序判定）：
      1) provider id 已绑定在某账号 → 直接登录（历史授权，不看邀请；
         仅头像跟随 OAuth 刷新，name 只在首次建号时写入）；
-     2) 否则邮箱为硬依赖：profile 拿不到邮箱 → /login?error=noemail；
-     3) 邮箱（小写）须命中 pending 邀请，否则 → /login?error=invite：
-        - 邀请邮箱命中已有用户（user_emails 或 username 命中）→ 绑定 provider id；
-        - 无对应用户 → 自动建号（role='member'、passwordHash='!oauth' 禁用密码登录）；
-        邀请在同事务置 accepted + 回填 userId，随后签发 session → /dashboard。
+     2) 邮箱为硬依赖：profile 拿不到邮箱 → /login?error=noemail；
+     3) 邮箱（小写）命中已有用户的任一邮箱（user_emails 或 username 命中）→
+        免邀请绑定 provider id 并登录（多邮箱账号的任一邮箱都参与三方登录匹配）；
+     4) 全新邮箱须命中 pending 邀请，否则 → /login?error=invite：
+        自动建号（role='member'、passwordHash='!oauth' 禁用密码登录；边缘时序下
+        邮箱刚被并入某账号则退化为绑定），邀请同事务置 accepted + 回填 userId，
+        随后签发 session → /dashboard。
    两种模式下，OAuth 带回的邮箱都会落 user_emails（source=provider）。 */
 export async function completeOAuthLogin(
   req: NextRequest,
@@ -154,11 +156,31 @@ export async function completeOAuthLogin(
     return loginWith(req, u);
   }
 
-  // —— 登录模式 2)+3)：邮箱硬依赖 + pending 邀请门控 ——
+  // —— 登录模式 2)：邮箱硬依赖 ——
   const email = profile.email ? normalizeEmail(profile.email) : '';
   if (!isEmail(email)) {
     return NextResponse.redirect(new URL('/login?error=noemail', req.url), 302);
   }
+
+  // —— 登录模式 3)：邮箱命中已有用户的任一邮箱 → 免邀请绑定登录 ——
+  // 多邮箱账号的任一邮箱（user_emails 或 username 命中）都参与三方登录匹配；邀请只门控全新邮箱
+  const emailRow = await prisma.userEmail.findUnique({ where: { email } });
+  const owner = emailRow
+    ? await prisma.user.findUnique({ where: { id: emailRow.userId } })
+    : await prisma.user.findUnique({ where: { username: email } });
+  if (owner) {
+    const u = await prisma.user.update({
+      where: { id: owner.id },
+      data: {
+        ...providerIdData(col, profile.providerUserId),
+        avatarUrl: profile.avatarUrl ?? undefined,
+      },
+    });
+    await upsertOAuthEmail(u.id, email, provider);
+    return loginWith(req, u);
+  }
+
+  // —— 登录模式 4)：全新邮箱须命中 pending 邀请 ——
   const invitation = await prisma.invitation.findUnique({ where: { email } });
   if (!invitation || invitation.status !== 'pending') {
     return NextResponse.redirect(new URL('/login?error=invite', req.url), 302);
@@ -168,7 +190,7 @@ export async function completeOAuthLogin(
   let user: User;
   try {
     user = await prisma.$transaction(async (tx) => {
-      // 邀请邮箱命中已有用户（user_emails 或 username 为该邮箱）→ 绑定 provider id
+      // 边缘时序：邀请创建后邮箱刚被并入某账号（user_emails 或 username 为该邮箱）→ 退化为绑定 provider id
       const emailRow = await tx.userEmail.findUnique({ where: { email } });
       const target = emailRow
         ? await tx.user.findUnique({ where: { id: emailRow.userId } })
