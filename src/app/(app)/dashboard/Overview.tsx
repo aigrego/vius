@@ -195,10 +195,13 @@ export default function Overview() {
                                     >
                                         {showPnl ? <Eye size={13} /> : <EyeOff size={13} />}
                                     </button>
-                                    {/* 第一行：名称 + 代码 */}
+                                    {/* 第一行：名称 + 代码 + 现价（括号内，红涨绿跌） */}
                                     <div className="flex flex-row items-baseline gap-2">
                                         <span className="text-sm">{p.name}</span>
                                         <span className="text-xs font-mono text-fg-3">{p.code}</span>
+                                        <span className={`text-xs font-mono ${trendColor(p.change)}`}>
+                                            ({p.current > 0 ? p.current.toFixed(2) : '-'})
+                                        </span>
                                     </div>
                                     {/* 第二行：当日涨跌 + 资讯 */}
                                     <div className="flex flex-row items-center gap-2">
@@ -243,10 +246,13 @@ export default function Overview() {
                                 onClick={() => openDetail(watchToDetail(w))}
                                 className="cursor-pointer rounded-lg w-full flex flex-col shadow gap-1 py-3 px-3 justify-center items-center bg-surface"
                             >
-                                {/* 第一行：名称 + 代码 */}
+                                {/* 第一行：名称 + 代码 + 现价（括号内，红涨绿跌） */}
                                 <div className="flex flex-row items-baseline gap-2">
                                     <span className="text-sm">{w.name}</span>
                                     <span className="text-xs font-mono text-fg-3">{w.code}</span>
+                                    <span className={`text-xs font-mono ${trendColor(w.change)}`}>
+                                        ({w.current > 0 ? w.current.toFixed(2) : '-'})
+                                    </span>
                                 </div>
                                 {/* 第二行：当日涨跌 + 资讯 */}
                                 <div className="flex flex-row items-center gap-2">
