@@ -7,7 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// 用户（飞书 OAuth 或账号密码登录）
+// 用户（账号密码或 OAuth 登录：飞书/Lark/GitHub）
 model User {
   id           String      @id @default(uuid())
   username     String      @unique
@@ -15,6 +15,7 @@ model User {
   name         String?
   role         String      @default("member") // admin / member
   larkUnionId  String?     @unique @map("lark_union_id")
+  githubId     String?     @unique @map("github_id") // GitHub 数字 id 转字符串
   avatarUrl    String?     @map("avatar_url")
   createdAt    DateTime    @default(now()) @map("created_at")
   emails       UserEmail[]
@@ -30,11 +31,24 @@ model UserEmail {
   userId    String   @map("user_id")
   email     String   @unique // 全局唯一，小写存储
   isPrimary Boolean  @default(false) @map("is_primary")
-  source    String   @default("manual") // manual / feishu / lark
+  source    String   @default("manual") // manual / feishu / lark / github
   createdAt DateTime @default(now()) @map("created_at")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_emails")
+}
+
+// 邀请（OAuth 注册白名单：三方登录邮箱须命中 pending 邀请才放行；accepted 留档审计）
+model Invitation {
+  id         String    @id @default(uuid())
+  email      String    @unique // 小写存储
+  status     String    @default("pending") // pending / accepted
+  invitedBy  String?   @map("invited_by") // 操作人 admin uid（松引用，无外键）
+  userId     String?   @map("user_id") // 接受后回填（建号/绑定的用户）
+  createdAt  DateTime  @default(now()) @map("created_at")
+  acceptedAt DateTime? @map("accepted_at")
+
+  @@map("invitations")
 }
 
 enum StockSource {

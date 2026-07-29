@@ -20,7 +20,7 @@
 - **框架**：Next.js 16（App Router）+ React 19 + TypeScript（strict）
 - **UI**：Tailwind CSS v4（CSS-first token 体系，无 tailwind.config，`globals.css` 的 `@theme inline` + `data-theme` 明暗切换）+ 自研 shadcn 风格 `components/ui`（button/badge/card/table/select/tabs/input/label/dialog/popover/dropdown-menu/segmented/textarea，**全部为原生实现，不依赖 radix 浮层**）；图标 lucide-react；图表 recharts
 - **数据库**：PostgreSQL + Prisma 6（schema `prisma/schema.prisma`）
-- **认证**：自研 jose HS256 cookie session（`src/lib/session.ts`，cookie 名 `vius_session`）+ bcryptjs 密码 + 飞书/Lark OAuth（`src/server/lark.ts`）；**没有 NextAuth**
+- **认证**：自研 jose HS256 cookie session（`src/lib/session.ts`，cookie 名 `vius_session`）+ bcryptjs 密码 + 飞书/Lark/GitHub OAuth（统一门面 `src/server/oauth.ts`，provider HTTP 细节在 `src/server/lark.ts`、`src/server/github.ts`）+ 邀请制白名单门控（`invitations` 表）；**没有 NextAuth**
 - **定时任务**：node-cron，`src/instrumentation.ts` 的 `register()`（Next 15+ 稳定特性）启动 `src/lib/scheduler.ts`
 - **数据获取**：SWR
 - **包管理**：npm
@@ -59,7 +59,7 @@ src/
 │   ├── icon.svg               # 站点 favicon（放大镜 + 行情脉冲线，同 components/Logo.tsx）
 │   ├── api/auth/              # login/logout/session/permissions/[provider]/login/callback
 │   │   └── profile/           # 资料/改密/多邮箱 emails(+primary)/解绑 unbind-oauth
-│   ├── api/users/             # 用户管理 API（admin 专属，requireAdmin）
+│   ├── api/users/             # 用户管理 API（admin 专属，requireAdmin；invitations/ 为邀请白名单）
 │   ├── api/roles/             # 角色字典 API（admin 专属）
 │   ├── api/permissions/       # 权限矩阵 API（admin 专属）
 │   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates/ 板块缓存（读 plate_cache）+ overview/ 总览三排卡片
@@ -86,7 +86,9 @@ src/
 │   ├── scheduler.ts                           # node-cron 调度（JOBS 注册表 + reschedule/trigger/listJobs + cron_run 运行记录）
 │   ├── jobs/                                  # sync-daily / sync-news / sync-lhb / sync-plates / check-alerts
 │   └── analysis/                              # volume-signals / chip-distribution
-├── server/lark.ts             # 飞书/Lark OAuth
+├── server/oauth.ts            # 三方 OAuth 统一门面（provider 分发 + 回调账号逻辑 + 邀请门控）
+├── server/lark.ts             # 飞书/Lark OAuth HTTP 细节
+├── server/github.ts           # GitHub OAuth HTTP 细节
 ├── server/user-emails.ts      # 多邮箱辅助（回填/OAuth 邮箱落表/格式校验）
 ├── hooks/  types/  utils/
 ├── instrumentation.ts         # register() → scheduler
@@ -102,8 +104,10 @@ src/
 - **RBAC 路由权限**：角色存 `roles` 表（`users.role` = 角色 key；admin/member 内置不可删、key 不可改），各角色对 8 条治理路由（/dashboard /pool /positions /ashare /analysis /lhb /cron /agent）的权限档存 `role_route_permissions` 表，三档语义：`rw` 读写 / `ro` 只读（写操作 403「只读权限，无法执行此操作」）/ `hidden` 不可见（侧边栏隐藏入口 + 接口 403「无权限」）；/profile、/settings 恒定可见不入矩阵。**admin 恒全 rw 不查库**；member 默认 7 条 rw + /cron hidden，自定义角色默认全 ro，未配置的路由走默认档兜底。核心 `src/lib/route-perm.ts`（`GOVERNED_ROUTES` 清单 / `getRouteLevels(roleKey)` 带 10s 进程缓存 / `requireRouteAccess(route, { write? })` 仿 requireAdmin 风格，调用方 `if (x instanceof NextResponse) return x`）；强制点：`/stock-pool/api/*`（/pool /positions，alerts/check 虽 GET 按写校验）、`/api/ashare/*`（/ashare；signals→/analysis；sync 的 session 分支按写校验、Bearer CRON_SECRET 分支跳过）、`/api/lhb`（GET）；前端 Sidebar 按 `levels` 过滤入口、AuthGate 对 hidden 路由 `replace('/dashboard')`。管理面：设置页「用户管理 / 权限矩阵 / 角色字典」tab + `/api/users` `/api/roles` `/api/permissions`（均 requireAdmin），当前用户权限 `GET /api/auth/permissions`；权限矩阵保存后调 `clearRouteLevelCache()` 即时生效。注意：角色变更只影响新请求按 `users.role` 查库的部分，已签发 cookie 里的 role 不变（重新登录后刷新）
 - **股票池按账号隔离**：`watchlist.user_id`（`@@unique([userId, code])`，级联删除）；`/stock-pool/api/*` 全部按 `session.uid` 过滤；告警历史 `alert_history.user_id` 可空（存量为 null）。定时告警走 `runAlertCheckAll()` 按用户分组跑、飞书推送标题带归属用户名；手动「检查预警」只查当前用户
 - **持仓股**：`position` 表按 `user_id` 隔离，**同一 (userId, code) 允许多条**（买入价/数量不同）；新增走 `POST /stock-pool/api/positions`（code+price+quantity，名称/市场自动解析）；持仓实时行情走 `/stock-pool/api/positions/realtime`（与股票池 realtime 独立的 3s TTL 缓存）
-- **多邮箱**：`user_emails` 表（全局唯一、小写、source=manual/feishu/lark）；任一邮箱可登录（login 路由先查 username 再查邮箱）；OAuth 回调把带回的邮箱落表；老用户 username 是邮箱时 GET /api/auth/profile 惰性回填主邮箱
-- **OAuth bind 模式**：已登录用户访问 `/api/auth/<provider>/login` 时 state='bind'，回调把 unionId 绑到当前账号（被他人占用跳 `/profile?tab=security&error=bind`）；解绑走 `POST /api/auth/profile/unbind-oauth`（无密码账号拒绝）
+- **多邮箱**：`user_emails` 表（全局唯一、小写、source=manual/feishu/lark/github）；任一邮箱可登录（login 路由先查 username 再查邮箱）；OAuth 回调把带回的邮箱落表；老用户 username 是邮箱时 GET /api/auth/profile 惰性回填主邮箱
+- **OAuth 邀请门控**（`src/server/oauth.ts` 的 `completeOAuthLogin`，feishu/lark/github 统一）：登录模式按序判定——provider id（`users.lark_union_id` / `users.github_id`）已绑定 → 直接登录（历史授权，不看邀请）；否则**邮箱为硬依赖**（profile 拿不到邮箱 → `/login?error=noemail`，⚠️ 飞书/Lark 无邮箱自动建号的旧行为已取消）且邮箱（小写）须命中 `invitations` 表 pending 邀请——命中已有用户（`user_emails` 或 username 为该邮箱）则绑定 provider id，否则自动建号（role=member、passwordHash='!oauth'），邀请同事务置 accepted + 回填 userId；无邀请 → `/login?error=invite`
+- **邀请管理**：设置页「用户管理」tab（MailPlus「邀请用户」弹窗 + 邀请记录卡，状态 Badge pending=待接受/accepted=已接受，仅 pending 可删，accepted 留档审计）+ `/api/users/invitations`（GET/POST）与 `/api/users/invitations/[id]`（DELETE），均 requireAdmin；邀请只做邮箱白名单，不发邮件、不预分配角色
+- **OAuth bind 模式**：已登录用户访问 `/api/auth/<provider>/login` 时 state='bind'，回调把 provider id 绑到当前账号（被他人占用跳 `/profile?tab=security&error=bind`），不看邀请；解绑走 `POST /api/auth/profile/unbind-oauth`，body 带 `{provider:'lark'|'github'}`（缺省 'lark'；feishu/lark 共用 lark_union_id 列），**无密码且另一 provider 也未绑定**时才拒绝解绑（防锁死）
 - **Next 16**：动态路由 `params` 是 Promise，必须 `await ctx.params`
 - **页面路由**（2026-07 改名）：`/dashboard` 行情总览、`/pool` 股票池、`/positions` 持仓股、`/ashare` A股总览、`/analysis` 放量信号；`/stock/[code]` 详情页保留不动；旧路径由 `next.config.ts` 的 redirects 做 307 兼容跳转；`/stock-pool/api/*` 接口路径未动
 - **涨跌配色**：行情涨跌一律用语义类 `text-up`/`text-down`/`bg-up`/`bg-down`/`border-up`/`border-down`（`globals.css` 的 `--up`/`--down` 运行时变量，默认红涨绿跌；`:root[data-up-color='green']` 互换为绿涨红跌）。偏好在设置页「通用-涨跌配色」，存 `localStorage('vius-prefs').upColor`，helper 在 `src/lib/updown.ts`，anti-flash 在 `layout.tsx` 内联脚本；语义红绿（删除/停牌/获利盘等）仍用原 Tailwind 色
@@ -132,11 +136,18 @@ src/
 
 ## 环境变量（.env.example 有逐条注释）
 
-`DATABASE_URL`（PG）、`SESSION_SECRET`、`SEED_ADMIN_PASSWORD`、`CRON_SECRET`、`FEISHU_WEBHOOK_URL`、`FEISHU_APP_ID/SECRET/REDIRECT_URI`、`LARK_*`（未配置时登录页隐藏三方登录按钮）
+`DATABASE_URL`（PG）、`SESSION_SECRET`、`SEED_ADMIN_PASSWORD`、`CRON_SECRET`、`FEISHU_WEBHOOK_URL`、`FEISHU_APP_ID/SECRET/REDIRECT_URI`、`LARK_*`、`GITHUB_CLIENT_ID/CLIENT_SECRET/REDIRECT_URI`（三方均未配置时登录页隐藏对应按钮）
 
 ## 飞书应用配置（首次部署）
 
 1. 飞书开放平台创建「企业自建应用」，开启网页应用能力
 2. 回调地址配置 `https://<域名>/api/auth/feishu/callback`
 3. `.env` 填 `FEISHU_APP_ID/SECRET/REDIRECT_URI`，重启
-4. 首次飞书登录自动创建用户（role=member）；admin 账号由 seed 创建
+4. 首次飞书登录需邮箱已被 admin 邀请（邀请命中后自动建号 role=member）；admin 账号由 seed 创建
+
+## GitHub OAuth App 配置（首次部署）
+
+1. https://github.com/settings/developers 创建「OAuth App」
+2. Authorization callback URL 配置 `https://<域名>/api/auth/github/callback`
+3. `.env` 填 `GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET/GITHUB_REDIRECT_URI`（与 OAuth App 回调一致），重启
+4. 登录邮箱须先被 admin 在设置页「用户管理」邀请；GitHub 用户隐藏邮箱时须有一个已验证邮箱可读（`user:email` scope），否则登录被拒（`/login?error=noemail`）

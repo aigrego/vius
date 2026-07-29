@@ -8,7 +8,7 @@ function unauthorized() {
 }
 
 /* GET /api/auth/profile → 个人资料页数据：用户基本信息 + 邮箱列表。
-   hasPassword / oauthBound 供安全 Tab 决定改密表单与绑定区展示。 */
+   hasPassword / oauthBound / githubBound 供安全 Tab 决定改密表单与绑定区展示。 */
 export async function GET() {
   try {
     const session = await requireUser();
@@ -32,6 +32,7 @@ export async function GET() {
           avatarUrl: u.avatarUrl,
           hasPassword: u.passwordHash !== '!oauth',
           oauthBound: !!u.larkUnionId,
+          githubBound: !!u.githubId,
         },
         emails: emails.map((e) => ({ email: e.email, isPrimary: e.isPrimary, source: e.source })),
       },

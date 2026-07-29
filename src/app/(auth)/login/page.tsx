@@ -9,6 +9,9 @@ import { LogoMark } from '@/components/Logo';
 const ERROR_MESSAGES: Record<string, string> = {
   feishu: '飞书登录失败，请重试',
   lark: 'Lark 登录失败，请重试',
+  github: 'GitHub 登录失败，请重试',
+  invite: '该邮箱未被邀请，请联系管理员邀请后重试',
+  noemail: '无法从第三方账号获取邮箱，请检查该账号的邮箱设置后重试',
 };
 
 function LoginForm() {
@@ -17,7 +20,7 @@ function LoginForm() {
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
-  const [oauth, setOauth] = React.useState<{ feishu: boolean; lark: boolean } | null>(null);
+  const [oauth, setOauth] = React.useState<{ feishu: boolean; lark: boolean; github: boolean } | null>(null);
 
   // OAuth 回调失败会跳到 /login?error=<provider>，在此透出提示。
   React.useEffect(() => {
@@ -102,7 +105,7 @@ function LoginForm() {
         </Button>
       </form>
 
-      {oauth && (oauth.feishu || oauth.lark) && (
+      {oauth && (oauth.feishu || oauth.lark || oauth.github) && (
         <>
           <div className="my-5 flex items-center gap-3">
             <div className="h-px flex-1 bg-border" />
@@ -132,6 +135,18 @@ function LoginForm() {
                 }}
               >
                 Lark 登录
+              </Button>
+            )}
+            {oauth.github && (
+              <Button
+                variant="secondary"
+                size="lg"
+                className="w-full"
+                onClick={() => {
+                  window.location.href = '/api/auth/github/login';
+                }}
+              >
+                GitHub 登录
               </Button>
             )}
           </div>

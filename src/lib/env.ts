@@ -20,6 +20,10 @@ export const env = {
   larkAppId: process.env.LARK_APP_ID ?? '',
   larkAppSecret: process.env.LARK_APP_SECRET ?? '',
   larkRedirectUri: process.env.LARK_REDIRECT_URI ?? '',
+  // GitHub OAuth 登录 —— 可选；未配置（空串）时登录页隐藏对应按钮。
+  githubClientId: process.env.GITHUB_CLIENT_ID ?? '',
+  githubClientSecret: process.env.GITHUB_CLIENT_SECRET ?? '',
+  githubRedirectUri: process.env.GITHUB_REDIRECT_URI ?? '',
   // 仅 seed 脚本使用：覆盖默认管理员密码（默认 'admin123'）。
   get seedAdminPassword() {
     return process.env.SEED_ADMIN_PASSWORD || 'admin123';

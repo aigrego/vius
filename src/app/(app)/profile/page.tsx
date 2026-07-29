@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useSearchParams } from 'next/navigation';
-import { KeyRound, Mail, ShieldCheck, Trash2 } from 'lucide-react';
+import { Github, KeyRound, Mail, ShieldCheck, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,7 +18,8 @@ interface ProfileUser {
   role: string;
   avatarUrl: string | null;
   hasPassword: boolean;
-  oauthBound: boolean;
+  oauthBound: boolean; // 飞书 / Lark
+  githubBound: boolean; // GitHub
 }
 
 interface EmailItem {
@@ -251,7 +252,11 @@ function SecurityTab({ data, reload }: { data: ProfileData; reload: () => void }
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [tip, setTip] = React.useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = React.useState(false);
-  const [oauth, setOauth] = React.useState<{ feishu: boolean; lark: boolean }>({ feishu: false, lark: false });
+  const [oauth, setOauth] = React.useState<{ feishu: boolean; lark: boolean; github: boolean }>({
+    feishu: false,
+    lark: false,
+    github: false,
+  });
 
   React.useEffect(() => {
     fetch('/api/auth/session')
@@ -291,12 +296,17 @@ function SecurityTab({ data, reload }: { data: ProfileData; reload: () => void }
     }
   };
 
-  const unbind = async () => {
-    if (busy || !window.confirm('确定解绑飞书/Lark 吗？解绑后将不能通过第三方登录本账号。')) return;
+  /* 解绑第三方登录：feishu/lark 共用 larkUnionId 列（provider 传 'lark'），github 独立一列。 */
+  const unbind = async (provider: 'lark' | 'github', label: string) => {
+    if (busy || !window.confirm(`确定解绑${label}吗？解绑后将不能通过该方式登录本账号。`)) return;
     setBusy(true);
     setTip(null);
     try {
-      const r = await fetch('/api/auth/profile/unbind-oauth', { method: 'POST' });
+      const r = await fetch('/api/auth/profile/unbind-oauth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
       const res = await r.json();
       setTip({ ok: res?.code === 200, text: res?.message || '解绑失败' });
       if (res?.code === 200) reload();
@@ -310,12 +320,21 @@ function SecurityTab({ data, reload }: { data: ProfileData; reload: () => void }
   const bindable: { key: string; label: string; href?: string }[] = [
     ...(oauth.feishu ? [{ key: 'feishu', label: '飞书', href: '/api/auth/feishu/login' }] : []),
     ...(oauth.lark ? [{ key: 'lark', label: 'Lark', href: '/api/auth/lark/login' }] : []),
-    { key: 'github', label: 'GitHub' },
+    ...(oauth.github
+      ? [{ key: 'github', label: 'GitHub', href: '/api/auth/github/login' }]
+      : [{ key: 'github', label: 'GitHub' }]),
     { key: 'google', label: 'Google' },
     { key: 'apple', label: 'Apple' },
     { key: 'wechat', label: '微信' },
     { key: 'dingtalk', label: '钉钉' },
   ];
+
+  // 各 provider 绑定状态：feishu/lark 同看 oauthBound，github 看 githubBound
+  const boundMap: Record<string, boolean> = {
+    feishu: data.user.oauthBound,
+    lark: data.user.oauthBound,
+    github: data.user.githubBound,
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -406,7 +425,17 @@ function SecurityTab({ data, reload }: { data: ProfileData; reload: () => void }
               </span>
               <span className="text-[13.5px] text-fg-1">飞书 / Lark</span>
               <span className="flex-1" />
-              <Button variant="secondary" size="sm" onClick={unbind} disabled={busy}>
+              <Button variant="secondary" size="sm" onClick={() => unbind('lark', '飞书/Lark')} disabled={busy}>
+                解绑
+              </Button>
+            </div>
+          )}
+          {data.user.githubBound && (
+            <div className="flex items-center gap-2.5 rounded-lg border border-border px-3 py-2.5">
+              <Github size={16} className="flex-none text-fg-1" />
+              <span className="text-[13.5px] text-fg-1">GitHub</span>
+              <span className="flex-1" />
+              <Button variant="secondary" size="sm" onClick={() => unbind('github', 'GitHub')} disabled={busy}>
                 解绑
               </Button>
             </div>
@@ -415,12 +444,18 @@ function SecurityTab({ data, reload }: { data: ProfileData; reload: () => void }
             <span className="text-[12.5px] text-fg-3">绑定新的登录方式</span>
             <div className="flex flex-wrap gap-2">
               {bindable.map((b) =>
-                b.href && !data.user.oauthBound ? (
+                b.href && !boundMap[b.key] ? (
                   <Button key={b.key} variant="secondary" size="sm" onClick={() => (window.location.href = b.href!)}>
                     {b.label}
                   </Button>
                 ) : (
-                  <Button key={b.key} variant="secondary" size="sm" disabled title="即将上线">
+                  <Button
+                    key={b.key}
+                    variant="secondary"
+                    size="sm"
+                    disabled
+                    title={b.href ? '已绑定' : '即将上线'}
+                  >
                     {b.label}
                   </Button>
                 ),
@@ -477,7 +512,7 @@ function ProfileInner() {
 
       {tab === 'security' && bindConflict && (
         <div className="mb-4 rounded-lg bg-danger-50 px-3 py-2 text-[12.5px] text-danger">
-          绑定失败：该飞书/Lark 账号已被其他用户绑定
+          绑定失败：该第三方账号已被其他用户绑定
         </div>
       )}
 

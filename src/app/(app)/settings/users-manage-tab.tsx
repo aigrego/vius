@@ -2,15 +2,17 @@
 
 import * as React from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus } from 'lucide-react';
+import { MailPlus, Plus } from 'lucide-react';
 
 /* 设置页「用户管理」tab（仅 admin 渲染；接口侧由 requireAdmin 兜底）。
-   维护登录账号：新增/改角色/重置密码/删除；角色选项来自 GET /api/roles。 */
+   维护登录账号：新增/改角色/重置密码/删除；角色选项来自 GET /api/roles。
+   邀请功能：填邮箱形成 OAuth 注册白名单（三方登录邮箱须命中 pending 邀请才放行）。 */
 
 interface UserItem {
   id: string;
@@ -29,6 +31,14 @@ interface RoleItem {
   userCount: number;
 }
 
+interface InvitationItem {
+  id: string;
+  email: string;
+  status: string; // pending / accepted
+  createdAt: string;
+  acceptedAt: string | null;
+}
+
 interface UserForm {
   username: string;
   name: string;
@@ -41,6 +51,7 @@ const EMPTY_FORM: UserForm = { username: '', name: '', password: '', role: 'memb
 export function UsersManageTab() {
   const [users, setUsers] = React.useState<UserItem[] | null>(null);
   const [roles, setRoles] = React.useState<RoleItem[]>([]);
+  const [invitations, setInvitations] = React.useState<InvitationItem[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   // 当前登录用户名（自己那行禁止删除，接口侧同样兜底）
@@ -51,6 +62,11 @@ export function UsersManageTab() {
   const [form, setForm] = React.useState<UserForm>(EMPTY_FORM);
   const [saving, setSaving] = React.useState(false);
 
+  // 邀请用户弹窗
+  const [inviteOpen, setInviteOpen] = React.useState(false);
+  const [inviteEmail, setInviteEmail] = React.useState('');
+  const [inviting, setInviting] = React.useState(false);
+
   // 重置密码弹窗
   const [pwdTarget, setPwdTarget] = React.useState<UserItem | null>(null);
   const [newPassword, setNewPassword] = React.useState('');
@@ -58,15 +74,22 @@ export function UsersManageTab() {
 
   const fetchAll = React.useCallback(async () => {
     try {
-      const [usersRes, rolesRes] = await Promise.all([fetch('/api/users'), fetch('/api/roles')]);
+      const [usersRes, rolesRes, invitationsRes] = await Promise.all([
+        fetch('/api/users'),
+        fetch('/api/roles'),
+        fetch('/api/users/invitations'),
+      ]);
       const usersJson = await usersRes.json();
       const rolesJson = await rolesRes.json();
+      const invitationsJson = await invitationsRes.json();
       if (usersJson.code !== 200) throw new Error(usersJson.message || '获取用户列表失败');
       if (rolesJson.code !== 200) throw new Error(rolesJson.message || '获取角色列表失败');
+      if (invitationsJson.code !== 200) throw new Error(invitationsJson.message || '获取邀请列表失败');
       // setState 一律发生在 await 之后（避免 effect 首次同步调用级联渲染）
       setError(null);
       setUsers(usersJson.data);
       setRoles(rolesJson.data);
+      setInvitations(invitationsJson.data);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -137,6 +160,41 @@ export function UsersManageTab() {
     }
   };
 
+  // 提交邀请：邮箱加入 OAuth 注册白名单
+  const handleInvite = async () => {
+    setInviting(true);
+    try {
+      const res = await fetch('/api/users/invitations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: inviteEmail })
+      });
+      const json = await res.json();
+      if (json.code !== 200) throw new Error(json.message || '邀请失败');
+      setInviteOpen(false);
+      setInviteEmail('');
+      flash(`已邀请「${inviteEmail.trim()}」`);
+      await fetchAll();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  // 删除邀请（仅 pending；accepted 留档审计，按钮已禁用，接口侧同样兜底）
+  const handleDeleteInvitation = async (inv: InvitationItem) => {
+    if (!confirm(`确定删除对「${inv.email}」的邀请？`)) return;
+    const res = await fetch(`/api/users/invitations/${inv.id}`, { method: 'DELETE' });
+    const json = await res.json();
+    if (json.code !== 200) {
+      alert(json.message || '删除失败');
+      return;
+    }
+    flash(`已删除对「${inv.email}」的邀请`);
+    await fetchAll();
+  };
+
   const handleResetPassword = async () => {
     if (!pwdTarget) return;
     setPwdSaving(true);
@@ -179,16 +237,22 @@ export function UsersManageTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 标题 + 新增按钮 */}
+      {/* 标题 + 邀请/新增按钮 */}
       <div className="flex items-start justify-between">
         <div>
           <h2 className="m-0 text-[16px] font-semibold text-fg-1">用户管理</h2>
           <p className="mt-1 text-[12.5px] text-fg-3">维护登录账号与角色；角色决定各模块的访问权限</p>
         </div>
-        <Button size="md" onClick={() => { setForm(EMPTY_FORM); setAddOpen(true); }}>
-          <Plus size={14} />
-          新增用户
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="md" onClick={() => { setInviteEmail(''); setInviteOpen(true); }}>
+            <MailPlus size={14} />
+            邀请用户
+          </Button>
+          <Button size="md" onClick={() => { setForm(EMPTY_FORM); setAddOpen(true); }}>
+            <Plus size={14} />
+            新增用户
+          </Button>
+        </div>
       </div>
 
       {notice && <div className="text-[12.5px] text-success">{notice}</div>}
@@ -257,6 +321,94 @@ export function UsersManageTab() {
           )}
         </CardContent>
       </Card>
+
+      {/* 邀请记录 */}
+      <div>
+        <h3 className="m-0 text-[14px] font-semibold text-fg-1">邀请记录</h3>
+        <p className="mt-1 text-[12.5px] text-fg-3">
+          被邀请邮箱可通过 飞书 / Lark / GitHub 登录；仅待接受的邀请可删除，已接受的留档审计
+        </p>
+      </div>
+      <Card>
+        <CardContent className="p-0">
+          {invitations.length === 0 ? (
+            <div className="py-8 text-center text-[13px] text-fg-3">暂无邀请记录</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>邮箱</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>邀请时间</TableHead>
+                  <TableHead>接受时间</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invitations.map(inv => (
+                  <TableRow key={inv.id}>
+                    <TableCell className="font-medium">{inv.email}</TableCell>
+                    <TableCell>
+                      {inv.status === 'accepted' ? (
+                        <Badge tone="success">已接受</Badge>
+                      ) : (
+                        <Badge tone="blue">待接受</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-fg-3">
+                      {new Date(inv.createdAt).toLocaleString('zh-CN', { hour12: false })}
+                    </TableCell>
+                    <TableCell className="text-fg-3">
+                      {inv.acceptedAt
+                        ? new Date(inv.acceptedAt).toLocaleString('zh-CN', { hour12: false })
+                        : '-'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="text-danger"
+                        disabled={inv.status !== 'pending'}
+                        title={inv.status !== 'pending' ? '已接受的邀请不可删除' : undefined}
+                        onClick={() => handleDeleteInvitation(inv)}
+                      >
+                        删除
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 邀请用户弹窗 */}
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent className="w-[420px] bg-surface border-border p-6">
+          <div className="text-[15px] font-semibold text-fg-1">邀请用户</div>
+          <div className="space-y-4 py-4">
+            <p className="m-0 text-[13px] text-fg-3">
+              被邀请邮箱可通过 飞书 / Lark / GitHub 登录；首次登录自动建号，已注册用户自动绑定
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-[13px] text-fg-2">邮箱 <span className="text-danger">*</span></label>
+              <Input
+                type="email"
+                value={inviteEmail}
+                onChange={e => setInviteEmail(e.target.value)}
+                placeholder="name@example.com"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setInviteOpen(false)}>取消</Button>
+            <Button onClick={handleInvite} disabled={!inviteEmail.trim() || inviting}>
+              {inviting ? '提交中…' : '确认邀请'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* 新增用户弹窗 */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>

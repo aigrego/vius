@@ -28,7 +28,7 @@ export async function backfillPrimaryEmail(user: { id: string; username: string 
 export async function upsertOAuthEmail(
   userId: string,
   email: string,
-  source: 'feishu' | 'lark',
+  source: 'feishu' | 'lark' | 'github',
 ): Promise<void> {
   const normalized = normalizeEmail(email);
   if (!isEmail(normalized)) return;

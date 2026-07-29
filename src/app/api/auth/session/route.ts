@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
-import { providerConfigured } from '@/server/lark';
+import { providerConfigured } from '@/server/oauth';
 
 /* GET /api/auth/session → 登录视图；未登录时 user 为 null（code 仍为 200，
    前端据此区分「未登录」与「接口异常」）。oauth 字段透出第三方登录是否已
    配置，登录页据此决定是否展示对应按钮。 */
 export async function GET() {
-  const oauth = { feishu: providerConfigured('feishu'), lark: providerConfigured('lark') };
+  const oauth = {
+    feishu: providerConfigured('feishu'),
+    lark: providerConfigured('lark'),
+    github: providerConfigured('github'),
+  };
 
   const session = await getSession();
   if (!session) {
