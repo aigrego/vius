@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import prisma from '@/lib/prisma';
 
 // 声明为动态路由
@@ -12,6 +13,9 @@ const MAX_LIMIT = 200;
 export const GET = async (request: NextRequest) => {
   try {
     await requireUser();
+    // 路由权限：/ashare 为 hidden 时 403
+    const auth = await requireRouteAccess('/ashare');
+    if (auth instanceof NextResponse) return auth;
 
     const searchParams = request.nextUrl.searchParams;
     const order = searchParams.get('order') === 'asc' ? 'asc' : 'desc';

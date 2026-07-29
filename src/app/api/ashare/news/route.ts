@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import { getNewsFlashList } from '@/model/NewsFlash';
 
 // 声明为动态路由：依赖 searchParams，避免构建期静态化/缓存
@@ -12,6 +13,9 @@ const MAX_PAGE_SIZE = 100;
 export const GET = async (request: NextRequest) => {
   try {
     await requireUser();
+    // 路由权限：/ashare 为 hidden 时 403
+    const auth = await requireRouteAccess('/ashare');
+    if (auth instanceof NextResponse) return auth;
 
     const searchParams = request.nextUrl.searchParams;
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);

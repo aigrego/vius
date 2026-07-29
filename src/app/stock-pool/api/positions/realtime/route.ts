@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import { fetchRealtimeQuotes, RealtimeQuote } from '@/lib/realtime';
 
 // 简单内存 TTL 缓存：防止多客户端高频轮询打爆外部行情源
@@ -10,6 +11,9 @@ const quoteCache = new Map<string, { expires: number; payload: any }>();
 // GET /api/positions/realtime - 获取当前用户持仓股票的实时行情（按账号隔离）
 export async function GET() {
   try {
+    // 路由权限：/positions 为 hidden 时 403
+    const auth = await requireRouteAccess('/positions');
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();

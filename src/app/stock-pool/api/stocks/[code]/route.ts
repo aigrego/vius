@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import prisma from '@/lib/prisma';
 
 // 支持的市场枚举
@@ -13,6 +14,9 @@ export async function GET(
   { params }: { params: Promise<{ code: string }> }
 ) {
   try {
+    // 路由权限：/pool 为 hidden 时 403
+    const auth = await requireRouteAccess('/pool');
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();
@@ -62,6 +66,9 @@ export async function PUT(
   { params }: { params: Promise<{ code: string }> }
 ) {
   try {
+    // 路由权限：/pool 写操作需 rw
+    const auth = await requireRouteAccess('/pool', { write: true });
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();
@@ -145,6 +152,9 @@ export async function DELETE(
   { params }: { params: Promise<{ code: string }> }
 ) {
   try {
+    // 路由权限：/pool 写操作需 rw
+    const auth = await requireRouteAccess('/pool', { write: true });
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();

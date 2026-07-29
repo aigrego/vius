@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import { resolveStock } from '@/lib/stock-resolver';
 import { fetchRealtimeQuotes } from '@/lib/realtime';
 import prisma from '@/lib/prisma';
@@ -10,6 +11,9 @@ const CODE_PATTERN = /^[0-9A-Za-z.]{1,12}$/;
 // GET /api/stocks - 获取当前用户的股票池（按账号隔离）
 export async function GET() {
   try {
+    // 路由权限：/pool 为 hidden 时 403
+    const auth = await requireRouteAccess('/pool');
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();
@@ -48,6 +52,9 @@ export async function GET() {
 // POST /api/stocks - 创建股票（只需 code，名称/市场/类型由服务端自动解析）
 export async function POST(request: Request) {
   try {
+    // 路由权限：/pool 写操作需 rw
+    const auth = await requireRouteAccess('/pool', { write: true });
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();

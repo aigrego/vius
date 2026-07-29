@@ -1,6 +1,7 @@
 import { handleApiError } from '@/utils/api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireRouteAccess } from '@/lib/route-perm';
 
 // 声明为动态路由：依赖 searchParams，避免构建期静态化/缓存
 export const dynamic = 'force-dynamic';
@@ -11,6 +12,10 @@ const MAX_PAGE_SIZE = 200;
 // GET /api/ashare/stocks - A 股股票清单（支持关键字模糊搜索与分页）
 export const GET = async (request: NextRequest) => {
   try {
+    // 路由权限：/ashare 为 hidden 时 403
+    const auth = await requireRouteAccess('/ashare');
+    if (auth instanceof NextResponse) return auth;
+
     const searchParams = request.nextUrl.searchParams;
     const keyword = searchParams.get('keyword')?.trim() || '';
     const market = searchParams.get('market')?.trim() || '';

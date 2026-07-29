@@ -9,8 +9,11 @@ import { applyTheme, readThemePref, type ThemePref } from '@/lib/theme';
 import { applyUpColor, type UpColorPref } from '@/lib/updown';
 import { LhbManageTab } from './lhb-manage-tab';
 import { NewsManageTab } from './news-manage-tab';
+import { PermMatrixTab } from './perm-matrix-tab';
+import { RolesDictTab } from './roles-dict-tab';
+import { UsersManageTab } from './users-manage-tab';
 
-/* 设置页：偏好 + 资讯管理/龙虎榜管理（仅 admin 可见/可操作）。
+/* 设置页：偏好 + 用户管理/权限矩阵/角色字典/资讯管理/龙虎榜管理（后五个仅 admin 可见/可操作）。
    主题（lib/theme）与涨跌配色（lib/updown）真实生效；语言、时区、语言切换器、
    通知偏好目前无对应体系，持久化在 localStorage('vius-prefs') 仅作占位。 */
 
@@ -70,13 +73,13 @@ function Row({
 export default function SettingsPage() {
   const [theme, setTheme] = React.useState<ThemePref>('light');
   const [prefs, setPrefs] = React.useState<Prefs>(DEFAULT_PREFS);
-  const [tab, setTab] = React.useState<'prefs' | 'lhb' | 'news'>('prefs');
+  const [tab, setTab] = React.useState<'prefs' | 'users' | 'perms' | 'roles' | 'lhb' | 'news'>('prefs');
   const [role, setRole] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setTheme(readThemePref());
     setPrefs(readPrefs());
-    // 「龙虎榜管理」tab 仅 admin 可见（接口侧 requireAdmin 兜底）
+    // 管理类 tab 仅 admin 可见（接口侧 requireAdmin 兜底）
     fetch('/api/auth/session')
       .then(res => res.json())
       .then(json => {
@@ -112,6 +115,15 @@ export default function SettingsPage() {
       <div className="mb-5 inline-flex gap-0.5 rounded-lg bg-surface-2 p-1">
         <SegBtn active={tab === 'prefs'} onClick={() => setTab('prefs')}>偏好</SegBtn>
         {role === 'admin' && (
+          <SegBtn active={tab === 'users'} onClick={() => setTab('users')}>用户管理</SegBtn>
+        )}
+        {role === 'admin' && (
+          <SegBtn active={tab === 'perms'} onClick={() => setTab('perms')}>权限矩阵</SegBtn>
+        )}
+        {role === 'admin' && (
+          <SegBtn active={tab === 'roles'} onClick={() => setTab('roles')}>角色字典</SegBtn>
+        )}
+        {role === 'admin' && (
           <SegBtn active={tab === 'news'} onClick={() => setTab('news')}>资讯管理</SegBtn>
         )}
         {role === 'admin' && (
@@ -123,6 +135,12 @@ export default function SettingsPage() {
         <LhbManageTab />
       ) : tab === 'news' && role === 'admin' ? (
         <NewsManageTab />
+      ) : tab === 'users' && role === 'admin' ? (
+        <UsersManageTab />
+      ) : tab === 'perms' && role === 'admin' ? (
+        <PermMatrixTab />
+      ) : tab === 'roles' && role === 'admin' ? (
+        <RolesDictTab />
       ) : (
       <div className="flex flex-col gap-4">
         <Card>

@@ -2,6 +2,7 @@ import { handleApiError } from '@/utils/api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { getStockSignals } from '@/model/StockSignal';
 import prisma from '@/lib/prisma';
+import { requireRouteAccess } from '@/lib/route-perm';
 
 // 声明为动态路由
 export const dynamic = 'force-dynamic';
@@ -14,6 +15,10 @@ const MAX_LIMIT = 500;
 // date 缺省时取最近一个有信号的日期
 export const GET = async (request: NextRequest) => {
   try {
+    // 路由权限：/analysis 为 hidden 时 403
+    const auth = await requireRouteAccess('/analysis');
+    if (auth instanceof NextResponse) return auth;
+
     const searchParams = request.nextUrl.searchParams;
     const type = searchParams.get('type')?.trim() || undefined;
     let date = searchParams.get('date')?.trim() || undefined;

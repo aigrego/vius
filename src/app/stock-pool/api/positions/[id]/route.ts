@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import prisma from '@/lib/prisma';
 
 // PUT /api/positions/[id] - 更新持仓记录（仅买入价/数量可改，代码不可变；按用户隔离）
@@ -8,6 +9,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // 路由权限：/positions 写操作需 rw
+    const auth = await requireRouteAccess('/positions', { write: true });
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();
@@ -92,6 +96,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // 路由权限：/positions 写操作需 rw
+    const auth = await requireRouteAccess('/positions', { write: true });
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();

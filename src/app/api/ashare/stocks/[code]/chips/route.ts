@@ -2,6 +2,7 @@ import { handleApiError } from '@/utils/api-response';
 import { NextResponse } from 'next/server';
 import { getStockDailies } from '@/model/StockDaily';
 import { calculateChipDistribution } from '@/lib/analysis/chip-distribution';
+import { requireRouteAccess } from '@/lib/route-perm';
 
 // 声明为动态路由
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,10 @@ export const GET = async (
   ctx: { params: Promise<{ code: string }> }
 ) => {
   try {
+    // 路由权限：/ashare 为 hidden 时 403
+    const auth = await requireRouteAccess('/ashare');
+    if (auth instanceof NextResponse) return auth;
+
     const { code } = await ctx.params;
     if (!CODE_PATTERN.test(code)) {
       return NextResponse.json(

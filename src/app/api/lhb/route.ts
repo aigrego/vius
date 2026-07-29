@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import { getLatestLhbDate, listLhbDates, listLhbStocks } from '@/model/Lhb';
 
 // 声明为动态路由
@@ -15,6 +16,9 @@ const toDateStr = (d: Date): string => d.toISOString().slice(0, 10);
 export const GET = async (request: NextRequest) => {
   try {
     await requireUser();
+    // 路由权限：/lhb 为 hidden 时 403
+    const auth = await requireRouteAccess('/lhb');
+    if (auth instanceof NextResponse) return auth;
 
     const searchParams = request.nextUrl.searchParams;
     let date = searchParams.get('date')?.trim() || '';

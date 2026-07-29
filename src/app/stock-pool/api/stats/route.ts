@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 
 // GET /api/stats - 获取当前用户股票池的统计数据（按账号隔离）
 export async function GET() {
   try {
+    // 路由权限：/pool 为 hidden 时 403
+    const auth = await requireRouteAccess('/pool');
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();

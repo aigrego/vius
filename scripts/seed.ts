@@ -62,6 +62,40 @@ async function main() {
       });
     }
     console.log(`stock: ${indices.length} indices upserted`);
+
+    // 内置角色（users.role 存角色 key；admin 恒全权限，member 默认权限见下）
+    const adminRole = await prisma.role.upsert({
+      where: { key: 'admin' },
+      update: { name: '管理员', builtin: true },
+      create: { key: 'admin', name: '管理员', builtin: true },
+    });
+    const memberRole = await prisma.role.upsert({
+      where: { key: 'member' },
+      update: { name: 'VIP用户', builtin: true },
+      create: { key: 'member', name: 'VIP用户', builtin: true },
+    });
+    console.log(`role: admin/member upserted (ids=${adminRole.id},${memberRole.id})`);
+
+    // member 默认路由权限（与 src/lib/route-perm.ts 的兜底默认值保持一致）；
+    // 已存在的行不覆盖 —— 管理员可能在设置页权限矩阵里调整过
+    const memberDefaultPerms = [
+      ['/dashboard', 'rw'],
+      ['/pool', 'rw'],
+      ['/positions', 'rw'],
+      ['/ashare', 'rw'],
+      ['/analysis', 'rw'],
+      ['/lhb', 'rw'],
+      ['/cron', 'hidden'],
+      ['/agent', 'rw'],
+    ] as const;
+    for (const [route, level] of memberDefaultPerms) {
+      await prisma.roleRoutePermission.upsert({
+        where: { roleId_route: { roleId: memberRole.id, route } },
+        update: {},
+        create: { roleId: memberRole.id, route, level },
+      });
+    }
+    console.log(`role_perm: ${memberDefaultPerms.length} member default rows upserted`);
     console.log('seed done.');
   } finally {
     await prisma.$disconnect();

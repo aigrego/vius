@@ -7,8 +7,9 @@ import { Activity, KeyRound, LayoutGrid, LineChart, ListChecks, Settings, Timer,
 import { cn } from '@/lib/utils';
 
 /* 左侧 244px 导航栏：行情总览 / 股票池 / 持仓股 / A股总览 / 放量信号 / 龙虎榜，
-   底部固定「Agent 接入 / 设置」入口。
-   用 usePathname 高亮当前项（选中态为品牌色淡底 + 品牌色文字）。 */
+   底部固定「Agent 接入 / 设置」入口（「定时任务」按权限插入）。
+   用 usePathname 高亮当前项（选中态为品牌色淡底 + 品牌色文字）。
+   入口可见性按 /api/auth/permissions 的路由权限档过滤：hidden 不显示。 */
 
 interface NavEntry {
   icon: React.ReactNode;
@@ -73,7 +74,7 @@ const BOTTOM_ITEMS: NavEntry[] = [
   },
 ];
 
-// 「定时任务」入口：插在「设置」前，仅 admin 可见
+// 「定时任务」入口：插在「设置」前，权限档非 hidden 才可见（admin 恒 rw 自然兼容）
 const CRON_ITEM: NavEntry = {
   icon: <Timer size={16} />,
   label: '定时任务',
@@ -81,14 +82,14 @@ const CRON_ITEM: NavEntry = {
   match: (p) => p === '/cron',
 };
 
-// 拉取当前会话角色（兼容 { user } 与 { data: { user } } 两种包裹）；失败返回 null
-async function fetchSessionRole(): Promise<string | null> {
+// 拉取当前用户的路由权限档（{ route: level }）；失败返回 null
+async function fetchRouteLevels(): Promise<Record<string, string> | null> {
   try {
-    const res = await fetch('/api/auth/session');
+    const res = await fetch('/api/auth/permissions');
     if (!res.ok) return null;
-    const data = await res.json().catch(() => null);
-    const user = (data?.user ?? data?.data?.user ?? null) as { role?: string | null } | null;
-    return user?.role ?? null;
+    const json = await res.json().catch(() => null);
+    const levels = json?.data?.levels;
+    return levels && typeof levels === 'object' ? (levels as Record<string, string>) : null;
   } catch {
     return null;
   }
@@ -112,34 +113,39 @@ function NavItem({ entry, active }: { entry: NavEntry; active: boolean }) {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [role, setRole] = React.useState<string | null>(null);
+  const [levels, setLevels] = React.useState<Record<string, string> | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
-    fetchSessionRole().then((r) => {
-      if (!cancelled) setRole(r);
+    fetchRouteLevels().then((l) => {
+      if (!cancelled) setLevels(l);
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // admin 在「设置」前插入「定时任务」入口；拉取失败/非 admin 不显示
-  const bottomItems =
-    role === 'admin'
-      ? [BOTTOM_ITEMS[0], CRON_ITEM, BOTTOM_ITEMS[1]]
-      : BOTTOM_ITEMS;
+  // 按权限档过滤：hidden 隐藏入口；levels 未拉到前保持现状全部显示（避免闪烁）
+  const visible = (href: string) => !levels || levels[href] !== 'hidden';
+  const navItems = NAV_ITEMS.filter((item) => visible(item.href));
+
+  // 底部固定入口：Agent 接入（按权限）/ 定时任务（拉到 levels 且非 hidden 才插入）/ 设置（恒显示）
+  const bottomItems = [
+    ...(visible('/agent') ? [BOTTOM_ITEMS[0]] : []),
+    ...(levels && levels['/cron'] !== 'hidden' ? [CRON_ITEM] : []),
+    BOTTOM_ITEMS[1],
+  ];
 
   return (
     <aside className="flex w-[244px] flex-none flex-col overflow-hidden border-r border-border bg-surface-2">
       <nav className="flex-1 overflow-y-auto px-3 pb-3 pt-3">
         <div className="mt-1 flex flex-col gap-px">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavItem key={item.href} entry={item} active={item.match(pathname)} />
           ))}
         </div>
       </nav>
-      {/* 底部固定入口：Agent 接入 / 设置（admin 多一个「定时任务」） */}
+      {/* 底部固定入口：Agent 接入 / 设置（按权限可多一个「定时任务」） */}
       <div className="flex flex-none flex-col gap-px border-t border-border px-3 py-2">
         {bottomItems.map((item) => (
           <NavItem key={item.href} entry={item} active={item.match(pathname)} />

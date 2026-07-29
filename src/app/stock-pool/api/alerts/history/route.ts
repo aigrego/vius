@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import prisma from '@/lib/prisma';
 
 // GET /api/alerts/history - 获取当前用户的预警历史（按账号隔离）
 export async function GET(request: Request) {
   try {
+    // 路由权限：/pool 为 hidden 时 403
+    const auth = await requireRouteAccess('/pool');
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();
@@ -53,6 +57,9 @@ export async function GET(request: Request) {
 // DELETE /api/alerts/history - 清理旧预警历史
 export async function DELETE(request: Request) {
   try {
+    // 路由权限：/pool 写操作需 rw
+    const auth = await requireRouteAccess('/pool', { write: true });
+    if (auth instanceof NextResponse) return auth;
     try {
       await requireUser();
     } catch (e) {

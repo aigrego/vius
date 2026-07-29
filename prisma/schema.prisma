@@ -294,6 +294,30 @@ model LhbSource {
   @@map("lhb_source")
 }
 
+// 角色（users.role 存角色 key；admin/member 为内置角色，key 不可改、不可删）
+model Role {
+  id        String                @id @default(uuid())
+  key       String                @unique // admin / member / 自定义（小写字母开头）
+  name      String // 显示名：管理员 / VIP用户
+  builtin   Boolean               @default(false)
+  createdAt DateTime              @default(now()) @map("created_at")
+  perms     RoleRoutePermission[]
+
+  @@map("roles")
+}
+
+// 角色-路由权限（按治理路由逐条配置 rw/ro/hidden；admin 恒全 rw 不查此表）
+model RoleRoutePermission {
+  id     String @id @default(uuid())
+  roleId String @map("role_id")
+  route  String
+  level  String // rw / ro / hidden
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, route])
+  @@map("role_route_permissions")
+}
+
 // 板块行情缓存（行业/题材/涨幅榜/跌幅榜，sync-plates 定时任务预热，页面只读库）
 model PlateCache {
   kind      String   @id @db.VarChar(20) // qq_hy / qq_gn / xgb_rise / xgb_fall

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import { resolveStock } from '@/lib/stock-resolver';
 import prisma from '@/lib/prisma';
 
@@ -9,6 +10,9 @@ const CODE_PATTERN = /^[0-9A-Za-z.]{1,12}$/;
 // GET /api/positions - 获取当前用户的持仓记录（按账号隔离，同一股票可多条）
 export async function GET() {
   try {
+    // 路由权限：/positions 为 hidden 时 403
+    const auth = await requireRouteAccess('/positions');
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();
@@ -47,6 +51,9 @@ export async function GET() {
 // POST /api/positions - 新增持仓记录（code + 买入价 + 买入数量，名称/市场自动解析）
 export async function POST(request: Request) {
   try {
+    // 路由权限：/positions 写操作需 rw
+    const auth = await requireRouteAccess('/positions', { write: true });
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();

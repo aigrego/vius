@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import { syncDailyStocks } from '@/lib/jobs/sync-daily';
 import { syncNews } from '@/lib/jobs/sync-news';
 import { syncLhb } from '@/lib/jobs/sync-lhb';
@@ -15,22 +15,13 @@ const VALID_TYPES = ['daily', 'news', 'signals', 'lhb', 'all'];
 // type=all 时按 daily → signals 顺序执行（信号依赖当日日线），news 独立执行，lhb 不参与 all
 export const POST = async (request: NextRequest) => {
   try {
-    // 鉴权：优先 CRON_SECRET（供外部 cron/脚本调用），其次登录 session
+    // 鉴权：优先 CRON_SECRET（供外部 cron/脚本调用），其次登录 session（需 /ashare 写权限）
     const cronSecret = process.env.CRON_SECRET;
     const bearer = request.headers.get('authorization');
     const isCron = !!cronSecret && bearer === `Bearer ${cronSecret}`;
     if (!isCron) {
-      try {
-        await requireUser();
-      } catch (e) {
-        if (e instanceof UnauthorizedError) {
-          return NextResponse.json(
-            { code: 401, data: null, message: '未登录' },
-            { status: 401 }
-          );
-        }
-        throw e;
-      }
+      const auth = await requireRouteAccess('/ashare', { write: true });
+      if (auth instanceof NextResponse) return auth;
     }
 
     const searchParams = request.nextUrl.searchParams;

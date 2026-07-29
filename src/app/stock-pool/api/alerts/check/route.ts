@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
+import { requireRouteAccess } from '@/lib/route-perm';
 import { runAlertCheck } from '@/lib/jobs/check-alerts';
 
 // GET /api/alerts/check - 手动检查当前用户股票池的预警（按账号隔离；
 // 核心逻辑已抽至 @/lib/jobs/check-alerts，定时任务走 runAlertCheckAll 按用户分组）
 export async function GET(request: Request) {
   try {
+    // 路由权限：虽为 GET 但会触发飞书推送，按 /pool 写权限校验
+    const auth = await requireRouteAccess('/pool', { write: true });
+    if (auth instanceof NextResponse) return auth;
     let session;
     try {
       session = await requireUser();
