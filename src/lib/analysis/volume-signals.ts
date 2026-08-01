@@ -1,6 +1,7 @@
 // 底部/顶部放量信号检测
 // 位置分位：现价在近 120 日区间中的位置，≤0.2 视为底部区、≥0.8 视为顶部区
-// 量比：当日成交量 / 前 20 日均量，≥2 视为放量
+// 量比（放量倍数）：当日成交量 / 前 20 日均量，≥2 视为放量
+// detail 与外部导入 CSV 字段对齐：收盘价/涨跌幅%/近一年最高价/高点日期/回撤%/放量倍数/当日量(万股)/20日均量(万股)
 
 import { runWithConcurrency } from '@/lib/eastmoney';
 import { getActiveStockDicts } from '@/model/StockDict';
@@ -15,6 +16,7 @@ export const POSITION_TOP = 0.8; // 顶部分位
 export const POSITION_WINDOW = 120; // 位置分位窗口（交易日）
 export const AVG_VOLUME_WINDOW = 20; // 均量窗口
 export const MIN_BARS = 60; // 参与计算的最少日线根数
+export const YEAR_WINDOW = 250; // 近一年窗口（约 250 个交易日，算最高价/高点日期/回撤用）
 
 // current 语义：最新价/收盘价（stock_trade.current；盘后为收盘价）
 export interface VolumeSignalBar {
@@ -22,17 +24,22 @@ export interface VolumeSignalBar {
   current: number;
   high: number;
   low: number;
-  volume: number;
+  volume: number; // 手（stock_trade 约定）
   changePct: number;
 }
 
 export interface VolumeSignal {
   type: 'bottom_volume' | 'top_volume';
   detail: {
-    volumeRatio: number;
+    volumeRatio: number; // 放量倍数
     position: number;
-    changePct: number;
-    close: number; // key 保持旧契约不变，值=当日 current
+    changePct: number; // 涨跌幅%
+    close: number; // key 保持旧契约不变，值=当日 current（收盘价）
+    yearHigh: number | null; // 近一年最高价
+    highDate: string | null; // 高点日期 YYYY-MM-DD
+    drawdown: number | null; // 回撤%（相对近一年最高价，负值）
+    dayVolume: number; // 当日量（万股）
+    avgVolume20: number; // 20 日均量（万股）
   };
 }
 
@@ -67,13 +74,31 @@ export function detectVolumeSignals(dailies: VolumeSignalBar[]): VolumeSignal | 
   else if (position >= POSITION_TOP) type = 'top_volume';
   if (!type) return null;
 
+  // 近一年最高价 / 高点日期 / 回撤%（与外部导入 CSV 同口径，回撤为负值）
+  const yearWindow = dailies.slice(-YEAR_WINDOW);
+  let yearHigh = -Infinity;
+  let highDate: string | null = null;
+  for (const d of yearWindow) {
+    if (d.high > yearHigh) {
+      yearHigh = d.high;
+      highDate = d.date instanceof Date ? d.date.toISOString().slice(0, 10) : String(d.date).slice(0, 10);
+    }
+  }
+  const drawdown = yearHigh > 0 ? ((last.current - yearHigh) / yearHigh) * 100 : null;
+
   return {
     type,
     detail: {
       volumeRatio: Math.round(volumeRatio * 100) / 100,
       position: Math.round(position * 1000) / 1000,
       changePct: last.changePct,
-      close: last.current
+      close: last.current,
+      yearHigh: yearHigh > 0 ? Math.round(yearHigh * 100) / 100 : null,
+      highDate,
+      drawdown: drawdown != null ? Math.round(drawdown * 10) / 10 : null,
+      // 手 → 万股（1 万股 = 100 手）
+      dayVolume: Math.round(last.volume) / 100,
+      avgVolume20: Math.round(avgVolume) / 100
     }
   };
 }
@@ -92,9 +117,9 @@ export async function runVolumeSignalJob(date: string): Promise<{ checked: numbe
   let signaled = 0;
   await runWithConcurrency(codes, 5, async code => {
     try {
-      // 取近 130 根（计算需要 120 日窗口 + 20 日均量），转成日期升序；
+      // 取近 250 根（近一年高点窗口需要 250；计算需要 120 日窗口 + 20 日均量），转成日期升序；
       // 快照行字段可空，关键字段缺失的行不参与计算
-      const rows = await getStockTrades(code, 130);
+      const rows = await getStockTrades(code, YEAR_WINDOW);
       const bars: VolumeSignalBar[] = rows.reverse().flatMap(r =>
         r.current != null && r.high != null && r.low != null && r.volume != null
           ? [{

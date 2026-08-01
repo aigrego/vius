@@ -4,15 +4,16 @@ import { useRef, useState } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { TrendingUp, TrendingDown, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 
-type SignalType = 'bottom_volume' | 'top_volume';
+// 页面只保留底部放量：导入固定 bottom_volume（API 的 type 契约不变）
+const IMPORT_TYPE = 'bottom_volume';
 
 interface ImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // 导入成功后回调（带回导入日期与类型，页面切到该日期刷新）
-  onImported: (date: string, type: SignalType) => void;
+  // 导入成功后回调（带回导入日期，页面切到该日期刷新）
+  onImported: (date: string) => void;
 }
 
 // 从文件名提取 8 位日期（如 底部放量股票筛选_20260731.csv → 2026-07-31）
@@ -35,7 +36,6 @@ export function ImportDialog({ open, onOpenChange, onImported }: ImportDialogPro
   const [fileName, setFileName] = useState('');
   const [csvText, setCsvText] = useState('');
   const [date, setDate] = useState(todayString());
-  const [type, setType] = useState<SignalType>('bottom_volume');
   const [importing, setImporting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
@@ -64,7 +64,7 @@ export function ImportDialog({ open, onOpenChange, onImported }: ImportDialogPro
       const res = await fetch('/api/ashare/signals/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: csvText, date, type }),
+        body: JSON.stringify({ csv: csvText, date, type: IMPORT_TYPE }),
       });
       const result = await res.json().catch(() => null);
       if (!res.ok || !result || result.code !== 200) {
@@ -75,7 +75,7 @@ export function ImportDialog({ open, onOpenChange, onImported }: ImportDialogPro
       if (d.skipped?.length) parts.push(`跳过未入字典 ${d.skipped.length} 只（${d.skipped.slice(0, 5).join('、')}${d.skipped.length > 5 ? ' 等' : ''}）`);
       if (d.invalid) parts.push(`无效行 ${d.invalid}`);
       setMessage(`${parts.join('，')}`);
-      onImported(d.date, d.type ?? type);
+      onImported(d.date);
     } catch (e) {
       setIsError(true);
       setMessage(`导入失败：${(e as Error).message}`);
@@ -104,26 +104,6 @@ export function ImportDialog({ open, onOpenChange, onImported }: ImportDialogPro
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex rounded-lg border border-border overflow-hidden">
-              <button
-                onClick={() => setType('bottom_volume')}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                  type === 'bottom_volume' ? 'bg-brand-blue text-white' : 'bg-bg text-fg-3 hover:bg-surface-2'
-                }`}
-              >
-                <TrendingUp className="w-4 h-4" />
-                底部放量
-              </button>
-              <button
-                onClick={() => setType('top_volume')}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                  type === 'top_volume' ? 'bg-brand-blue text-white' : 'bg-bg text-fg-3 hover:bg-surface-2'
-                }`}
-              >
-                <TrendingDown className="w-4 h-4" />
-                顶部放量
-              </button>
-            </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-fg-3">信号日期</span>
               <Input

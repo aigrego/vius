@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Plus, X } from 'lucide-react';
 
-/* 设置页「龙虎榜管理」tab（仅 admin 渲染；接口侧同样由 requireAdmin 兜底）。
+/* 数据中心「龙虎榜管理」tab（仅 admin 渲染；接口侧同样由 requireAdmin 兜底）。
    管理龙虎榜数据来源（东财 datacenter API），并可按日期清除已落库数据。 */
 
 interface LhbSourceItem {

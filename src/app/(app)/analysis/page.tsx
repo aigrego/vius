@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState, ComponentProps } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -16,17 +15,23 @@ import {
 import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
 import { RealtimeStock } from '@/hooks/useRealtimeData';
 import { ImportDialog } from '@/app/(app)/analysis/ImportDialog';
-import { RefreshCw, TrendingUp, TrendingDown, CalendarDays, Upload } from 'lucide-react';
+import { toDisplayCode } from '@/utils/stock-code';
+import { RefreshCw, CalendarDays, Upload } from 'lucide-react';
 
-// 信号类型：底部放量 / 顶部放量（与后端 stock_signal.type 一致）
-type SignalType = 'bottom_volume' | 'top_volume';
+// 页面只展示底部放量信号（顶部放量已从页面移除；数据层/API 的 type 契约不变）
+const SIGNAL_TYPE = 'bottom_volume';
 
+// detail 字段与外部导入 CSV 对齐（自动计算的信号同样落这些字段，存量老数据可能缺）
 interface SignalDetail {
-  volumeRatio: number;
-  position: number | null; // 外部导入的信号无 120 日区间数据，为 null
-  changePct: number;
-  close: number;
-  drawdown?: number | null; // 外部导入特有：相对近一年高点的回撤%
+  volumeRatio: number; // 放量倍数
+  position: number | null; // 位置分位（列表不展示；导入行为 null）
+  changePct: number; // 涨跌幅%
+  close: number; // 收盘价
+  drawdown?: number | null; // 回撤%（相对近一年最高价，负值）
+  yearHigh?: number | null; // 近一年最高价
+  highDate?: string | null; // 高点日期
+  dayVolume?: number | null; // 当日量（万股）
+  avgVolume20?: number | null; // 20 日均量（万股）
 }
 
 interface Signal {
@@ -37,11 +42,6 @@ interface Signal {
   date: string;
   detail: SignalDetail;
 }
-
-const SignalTypeTabs: { value: SignalType; label: string }[] = [
-  { value: 'bottom_volume', label: '底部放量' },
-  { value: 'top_volume', label: '顶部放量' },
-];
 
 // detail 字段后端约定为已 parse 的对象，这里兜底兼容字符串；各字段空值归一
 function parseDetail(detail: unknown): SignalDetail {
@@ -61,15 +61,15 @@ function parseDetail(detail: unknown): SignalDetail {
     changePct: raw?.changePct ?? 0,
     close: raw?.close ?? 0,
     drawdown: raw?.drawdown ?? null,
+    yearHigh: raw?.yearHigh ?? null,
+    highDate: raw?.highDate ?? null,
+    dayVolume: raw?.dayVolume ?? null,
+    avgVolume20: raw?.avgVolume20 ?? null,
   };
 }
 
-// 位置分位可能是 0-1 小数或 0-100 百分数，统一按百分数展示；外部导入无此值
-function formatPosition(position: number | null): string {
-  if (position == null) return '-';
-  const pct = position <= 1 ? position * 100 : position;
-  return `${pct.toFixed(0)}%`;
-}
+// 万股展示（一位小数；无数据 '-'）
+const formatWan = (v?: number | null): string => (v == null ? '-' : v.toFixed(1));
 
 function todayString(): string {
   const d = new Date();
@@ -79,10 +79,7 @@ function todayString(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-type BadgeTone = ComponentProps<typeof Badge>['tone'];
-
 export default function StockPoolAnalysisPage() {
-  const [signalType, setSignalType] = useState<SignalType>('bottom_volume');
   const [date, setDate] = useState<string>(todayString());
   const [signals, setSignals] = useState<Signal[]>([]);
   const [actualDate, setActualDate] = useState<string>('');
@@ -96,7 +93,7 @@ export default function StockPoolAnalysisPage() {
     try {
       setLoading(true);
       setError(null);
-      const params = new URLSearchParams({ type: signalType, date, limit: '100' });
+      const params = new URLSearchParams({ type: SIGNAL_TYPE, date, limit: '100' });
       const res = await fetch(`/api/ashare/signals?${params.toString()}`);
       const result = await res.json();
 
@@ -131,18 +128,17 @@ export default function StockPoolAnalysisPage() {
     } finally {
       setLoading(false);
     }
-  }, [signalType, date]);
+  }, [date]);
 
   useEffect(() => {
     fetchSignals();
   }, [fetchSignals]);
 
-  // 导入成功：切到导入的类型/日期刷新（同值时状态不变化，手动补一次刷新）
-  const handleImported = (d: string, t: SignalType) => {
-    if (d === date && t === signalType) {
+  // 导入成功：切到导入日期刷新（同日期时状态不变化，手动补一次刷新）
+  const handleImported = (d: string) => {
+    if (d === date) {
       fetchSignals();
     } else {
-      setSignalType(t);
       setDate(d);
     }
   };
@@ -169,15 +165,6 @@ export default function StockPoolAnalysisPage() {
     setDetailOpen(true);
   };
 
-  const getMarketBadgeTone = (market: string): BadgeTone => {
-    const tones: Record<string, BadgeTone> = {
-      sh: 'blue',
-      sz: 'success',
-      bj: 'danger',
-    };
-    return tones[market] || 'neutral';
-  };
-
   return (
     <div className="min-h-screen bg-bg">
       {/* Header */}
@@ -194,6 +181,22 @@ export default function StockPoolAnalysisPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* 时间筛选（无信号的日期会自动落到最近信号日，右侧提示实际日期） */}
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-fg-3" />
+              <Input
+                type="date"
+                value={date}
+                max={todayString()}
+                onChange={(e) => e.target.value && setDate(e.target.value)}
+                className="w-[160px] h-8 text-xs"
+              />
+              {actualDate && actualDate !== date && (
+                <span className="text-xs text-fg-3">
+                  实际信号日期: {actualDate}
+                </span>
+              )}
+            </div>
             <Button
               variant="secondary"
               size="sm"
@@ -216,64 +219,23 @@ export default function StockPoolAnalysisPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* 筛选区：信号类型 Tab + 日期选择 */}
-        <Card className="mb-6">
-          <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-              <div className="flex rounded-lg border border-border overflow-hidden">
-                {SignalTypeTabs.map((t) => (
-                  <button
-                    key={t.value}
-                    onClick={() => setSignalType(t.value)}
-                    className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                      signalType === t.value
-                        ? 'bg-brand-blue text-white'
-                        : 'bg-bg text-fg-3 hover:bg-surface-2'
-                    }`}
-                  >
-                    {t.value === 'bottom_volume' ? (
-                      <TrendingUp className="w-4 h-4" />
-                    ) : (
-                      <TrendingDown className="w-4 h-4" />
-                    )}
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <CalendarDays className="w-4 h-4 text-fg-3" />
-                <Input
-                  type="date"
-                  value={date}
-                  max={todayString()}
-                  onChange={(e) => e.target.value && setDate(e.target.value)}
-                  className="w-[160px]"
-                />
-                {actualDate && actualDate !== date && (
-                  <span className="text-xs text-fg-3">
-                    实际信号日期: {actualDate}
-                  </span>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 信号表格 */}
+        {/* 信号表格（列与外部导入 CSV 字段对齐 + 信号时间列，便于按放量天数汇总分析） */}
         <Card>
           <CardContent className="p-0">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[100px]">代码</TableHead>
+                  <TableHead>代码</TableHead>
                   <TableHead>名称</TableHead>
-                  <TableHead className="w-[80px]">市场</TableHead>
+                  <TableHead>时间</TableHead>
                   <TableHead className="text-right">收盘价</TableHead>
-                  <TableHead className="text-right">当日涨跌幅</TableHead>
-                  <TableHead className="text-right">量比</TableHead>
-                  <TableHead className="text-right">位置分位</TableHead>
+                  <TableHead className="text-right">涨跌幅%</TableHead>
+                  <TableHead className="text-right">近一年最高价</TableHead>
+                  <TableHead>高点日期</TableHead>
                   <TableHead className="text-right">回撤%</TableHead>
+                  <TableHead className="text-right">放量倍数</TableHead>
+                  <TableHead className="text-right">当日量（万股）</TableHead>
+                  <TableHead className="text-right">20日均量（万股）</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -285,49 +247,58 @@ export default function StockPoolAnalysisPage() {
                       className="cursor-pointer"
                       onClick={() => openDetail(signal)}
                     >
-                      <TableCell className="font-mono font-medium">{signal.code}</TableCell>
-                      <TableCell>{signal.name}</TableCell>
-                      <TableCell>
-                        <Badge tone={getMarketBadgeTone(signal.market)}>
-                          {(signal.market || '').toUpperCase()}
-                        </Badge>
+                      <TableCell className="font-mono font-medium whitespace-nowrap">
+                        {toDisplayCode(signal.code, signal.market)}
                       </TableCell>
-                      <TableCell className="text-right font-mono">
+                      <TableCell className="whitespace-nowrap">{signal.name}</TableCell>
+                      <TableCell className="font-mono whitespace-nowrap text-fg-3">
+                        {signal.date?.slice(0, 10)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono whitespace-nowrap">
                         ¥{signal.detail.close.toFixed(2)}
                       </TableCell>
                       {/* 涨跌色随设置页「涨跌配色」翻转（--up/--down，默认红涨绿跌） */}
-                      <TableCell className={`text-right font-mono ${isUp ? 'text-up' : 'text-down'}`}>
+                      <TableCell className={`text-right font-mono whitespace-nowrap ${isUp ? 'text-up' : 'text-down'}`}>
                         {isUp ? '+' : ''}{signal.detail.changePct.toFixed(2)}%
                       </TableCell>
-                      <TableCell className="text-right font-mono">
+                      <TableCell className="text-right font-mono whitespace-nowrap">
+                        {signal.detail.yearHigh != null ? `¥${signal.detail.yearHigh.toFixed(2)}` : '-'}
+                      </TableCell>
+                      <TableCell className="font-mono whitespace-nowrap text-fg-3">
+                        {signal.detail.highDate ?? '-'}
+                      </TableCell>
+                      <TableCell className="text-right font-mono whitespace-nowrap">
+                        {signal.detail.drawdown != null ? `${signal.detail.drawdown.toFixed(1)}%` : '-'}
+                      </TableCell>
+                      <TableCell className="text-right font-mono whitespace-nowrap">
                         {signal.detail.volumeRatio.toFixed(2)}
                       </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatPosition(signal.detail.position)}
+                      <TableCell className="text-right font-mono whitespace-nowrap">
+                        {formatWan(signal.detail.dayVolume)}
                       </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {signal.detail.drawdown != null ? `${signal.detail.drawdown.toFixed(1)}%` : '-'}
+                      <TableCell className="text-right font-mono whitespace-nowrap">
+                        {formatWan(signal.detail.avgVolume20)}
                       </TableCell>
                     </TableRow>
                   );
                 })}
                 {!loading && !error && signals.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-fg-3">
-                      该日期暂无{SignalTypeTabs.find(t => t.value === signalType)?.label}信号
+                    <TableCell colSpan={11} className="text-center py-8 text-fg-3">
+                      该日期暂无底部放量信号
                     </TableCell>
                   </TableRow>
                 )}
                 {loading && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-fg-3">
+                    <TableCell colSpan={11} className="text-center py-8 text-fg-3">
                       加载中...
                     </TableCell>
                   </TableRow>
                 )}
                 {!loading && error && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8">
+                    <TableCell colSpan={11} className="text-center py-8">
                       <div className="text-yellow-400">⚠️ {error}</div>
                       <Button
                         variant="secondary"

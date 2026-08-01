@@ -7,14 +7,12 @@ import { Switch } from '@/components/ui/switch';
 import { SegBtn } from '@/components/ui/segmented';
 import { applyTheme, readThemePref, type ThemePref } from '@/lib/theme';
 import { applyUpColor, type UpColorPref } from '@/lib/updown';
-import { LhbManageTab } from './lhb-manage-tab';
-import { NewsManageTab } from './news-manage-tab';
 import { PermMatrixTab } from './perm-matrix-tab';
-import { RealtimeManageTab } from './realtime-manage-tab';
 import { RolesDictTab } from './roles-dict-tab';
 import { UsersManageTab } from './users-manage-tab';
 
-/* 设置页：偏好 + 用户管理/权限矩阵/角色字典/资讯管理/龙虎榜管理（后五个仅 admin 可见/可操作）。
+/* 设置页：偏好 + 用户管理/权限矩阵/角色字典（后三个仅 admin 可见/可操作）。
+   资讯管理/行情管理/龙虎榜管理已迁移到 /data「数据管理」页。
    主题（lib/theme）与涨跌配色（lib/updown）真实生效；语言、时区、语言切换器、
    通知偏好目前无对应体系，持久化在 localStorage('vius-prefs') 仅作占位。 */
 
@@ -74,7 +72,7 @@ function Row({
 export default function SettingsPage() {
   const [theme, setTheme] = React.useState<ThemePref>('light');
   const [prefs, setPrefs] = React.useState<Prefs>(DEFAULT_PREFS);
-  const [tab, setTab] = React.useState<'prefs' | 'users' | 'perms' | 'roles' | 'lhb' | 'news' | 'realtime'>('prefs');
+  const [tab, setTab] = React.useState<'prefs' | 'users' | 'perms' | 'roles'>('prefs');
   const [role, setRole] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -124,24 +122,9 @@ export default function SettingsPage() {
         {role === 'admin' && (
           <SegBtn active={tab === 'roles'} onClick={() => setTab('roles')}>角色字典</SegBtn>
         )}
-        {role === 'admin' && (
-          <SegBtn active={tab === 'news'} onClick={() => setTab('news')}>资讯管理</SegBtn>
-        )}
-        {role === 'admin' && (
-          <SegBtn active={tab === 'realtime'} onClick={() => setTab('realtime')}>行情管理</SegBtn>
-        )}
-        {role === 'admin' && (
-          <SegBtn active={tab === 'lhb'} onClick={() => setTab('lhb')}>龙虎榜管理</SegBtn>
-        )}
       </div>
 
-      {tab === 'lhb' && role === 'admin' ? (
-        <LhbManageTab />
-      ) : tab === 'news' && role === 'admin' ? (
-        <NewsManageTab />
-      ) : tab === 'realtime' && role === 'admin' ? (
-        <RealtimeManageTab />
-      ) : tab === 'users' && role === 'admin' ? (
+      {tab === 'users' && role === 'admin' ? (
         <UsersManageTab />
       ) : tab === 'perms' && role === 'admin' ? (
         <PermMatrixTab />

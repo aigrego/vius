@@ -10,10 +10,10 @@
 - **股票池**（`/pool`）：自选关注股管理、实时行情、阈值告警（飞书 webhook 推送）、审计日志；**按账号隔离**，每人一个独立池子（`watchlist.user_id`）；**新建只需填股票代码**，名称/市场/类型由服务端自动解析（`src/lib/stock-resolver.ts`：stock_dict 优先，实时行情三源兜底并懒建字典行）
 - **持仓股**（`/positions`）：买入持仓管理，添加填 股票代码+买入价+买入数量；同一股票允许多条持仓记录（`position` 表，按 `user_id` 隔离，无唯一约束）；页面实时合并行情算浮动盈亏；**支持卖出**（`POST /stock-pool/api/positions/[id]/sell`，全部/部分），列表分「持仓中/已卖出」两 tab，汇总卡含已实现盈亏
 - **A股总览**（`/ashare`）：统计卡 + 全市场 4900+ 股票清单（代码带 SH/SZ/BJ 后缀展示，列含现价/流通市值（总市值）/成交量/换手率/市盈率/振幅/行业板块/热门板块，行情取各股最近一条 `stock_trade`、板块取 `plate_stock`，检索+分页，纯数据浏览）
-- **资讯管理**（`/news`）：全库快讯分页查询（只看已关联过滤、行内 code 徽章开个股详情弹窗）；数据源启停配置在设置页「资讯管理」tab
-- **数据管理**（`/data`）：手动触发同步（行情/信号/快讯/日行情区间补缺）；定时自动同步见 /cron
-- **放量信号**（`/analysis`）：每日收盘后自动计算的底部/顶部放量信号；支持「导入信号」把外部工具筛选 CSV 导入分析（`POST /api/ashare/signals/import`，body `{csv, date, type}`，需含 代码/收盘价/放量倍数 列，代码兼容 sh/sz/bj 前缀/fullCode/裸码，同 (股票,日期,类型) 覆盖写，字典缺失代码跳过并回报；导入行 `detail.source='import'`、`position=null` 页面显示「-」，特有 `drawdown/yearHigh/highDate/dayVolume/avgVolume20` 字段，表格多一列「回撤%」）
-- **龙虎榜**（`/lhb`）：沪深北交易所异动个股龙虎榜（东财 datacenter 采集落 `lhb_stock`/`lhb_seat`，17:30 自动同步）；市场 tab + 日期/关键字筛选 + 行展开买卖前五席位；数据源管理在设置页「龙虎榜管理」tab（仅 admin，配置存 `lhb_source`，cron 字段仅展示，实际调度走全局 sync-lhb 任务）
+- **资讯管理**（`/news`）：全库快讯分页查询（只看已关联过滤、行内 code 徽章开个股详情弹窗）；数据源启停配置在 /data「数据中心-资讯管理」tab
+- **数据中心**（`/data`）：仅 admin；tabs 展示——「行情管理」（行情数据源启停 + 手动同步行情/信号/快讯 + 日行情区间补缺，布局对齐龙虎榜管理）、「资讯管理」（快讯数据源）、「龙虎榜管理」（龙虎榜数据源 + 历史回补 + 按日期清除）；定时自动同步见 /cron
+- **放量信号**（`/analysis`）：每日收盘后自动计算的底部/顶部放量信号（**页面只展示底部放量**，日期筛选在页头右侧；数据层/API 的 type 契约不变）；列表列与外部 CSV 对齐并带「时间」列（信号日期，便于按放量天数汇总分析）：代码（SH/SZ/BJ 后缀）/名称/时间/收盘价/涨跌幅%/近一年最高价/高点日期/回撤%/放量倍数/当日量(万股)/20日均量(万股)，信号 `detail` 同构落这些字段（计算路径取 250 根日线算近一年高点与回撤；存量老 detail 缺新列显示「-」）。支持「导入信号」把外部工具筛选 CSV 导入分析（`POST /api/ashare/signals/import`，body `{csv, date, type}`，页面固定按 bottom_volume 导入；需含 代码/收盘价/放量倍数 列，代码兼容 sh/sz/bj 前缀/fullCode/裸码，同 (股票,日期,类型) 覆盖写，字典缺失代码跳过并回报；导入行 `detail.source='import'`、`position=null`）
+- **龙虎榜**（`/lhb`）：沪深北交易所异动个股龙虎榜（东财 datacenter 采集落 `lhb_stock`/`lhb_seat`，17:30 自动同步）；市场 tab + 日期/关键字筛选 + 行展开买卖前五席位；数据源管理在 /data「数据中心-龙虎榜管理」tab（仅 admin，配置存 `lhb_source`，cron 字段仅展示，实际调度走全局 sync-lhb 任务）
 - **个股详情**：股票池/持仓股/A股总览/放量信号的行点击、龙虎榜的名称点击开 `components/stock-pool/stock-detail-modal` 弹窗（标题为 SH/SZ/BJ 后缀展示代码，右上「最后更新」；指标卡含涨跌幅/换手率/总市值；K线走势=选股宝图表组件，内部版心固定 780px、用 CSS zoom 等比放大铺满弹窗；筹码分布、相关资讯；壳层不滚动，Tab 内容块独立纵向滚动）；`/stock/[code]` 统一详情页 = 实时主要指标（`/api/stocks/real`）+ 同款选股宝图表 + 筹码分布/相关资讯区块（后两者仅 A 股）
 - **定时任务管理**（`/cron`）：仅 admin 可见/可操作（侧边栏入口按路由权限档渲染，`/api/cron/*` 校验 `role==='admin'` 否则 403）；查看/改 cron 表达式/启停/手动触发，运行记录落 `cron_run` 表
 
@@ -57,10 +57,10 @@ src/
 │   │   ├── analysis/          # 放量信号
 │   │   ├── ashare/            # A股总览（统计卡 + 股票清单）
 │   │   ├── news/              # 资讯管理（全库快讯分页查询）
-│   │   ├── data/              # 数据管理（手动同步）
+│   │   ├── data/              # 数据中心（行情/资讯/龙虎榜管理 tabs，仅 admin）
 │   │   ├── lhb/               # 龙虎榜（榜单 + 行展开席位）
 │   │   ├── profile/           # 个人资料（资料/安全：多邮箱、改密、OAuth 绑定）
-│   │   ├── settings/          # 设置（偏好 + admin 专属「用户管理」/「权限矩阵」/「角色字典」/「资讯管理」/「行情管理」/「龙虎榜管理」tab）
+│   │   ├── settings/          # 设置（偏好 + admin 专属「用户管理」/「权限矩阵」/「角色字典」tab；数据源管理类 tab 已迁 /data）
 │   │   ├── cron/              # 定时任务管理（仅 admin）
 │   │   ├── agent/             # Agent 接入（占位页）
 │   │   └── page.tsx           # redirect /dashboard
@@ -123,7 +123,7 @@ src/
 - **页面路由**（2026-07 改名）：`/dashboard` 行情总览、`/pool` 股票池、`/positions` 持仓股、`/ashare` A股总览、`/analysis` 放量信号；`/stock/[code]` 详情页保留不动；旧路径由 `next.config.ts` 的 redirects 做 307 兼容跳转；`/stock-pool/api/*` 接口路径未动
 - **涨跌配色**：行情涨跌一律用语义类 `text-up`/`text-down`/`bg-up`/`bg-down`/`border-up`/`border-down`（`globals.css` 的 `--up`/`--down` 运行时变量，默认红涨绿跌；`:root[data-up-color='green']` 互换为绿涨红跌）。偏好在设置页「通用-涨跌配色」，存 `localStorage('vius-prefs').upColor`，helper 在 `src/lib/updown.ts`，anti-flash 在 `layout.tsx` 内联脚本；语义红绿（删除/停牌/获利盘等）仍用原 Tailwind 色
 - **行情总览三排卡片**：`GET /api/stocks/overview` 无参只读 `overview_cache` 缓存秒回（indices 全局 `user_id='*'`，positions/watchlist 按用户）；`?refresh=1` 重算+upsert（行情先读 `stock_trade` 当日快照、缺行兜底一次批量实时调用）。前端 `dashboard/Overview.tsx`：开页先渲染缓存，再 refresh 更新，之后 10s 轮询。持仓排按 code 汇总（`avgCost=Σ(price×qty)/Σqty`，`pnl=(current−avgCost)×totalQty`）；股票池排「关注后涨跌幅」基于 `watchlist.mark_price`（关注时价格，创建时记录、存量 null 懒回填），「资讯关联」=近 7 天 `news_stock` 匹配条数
-- **行情数据源管理**：`realtime_source` 表（key=sina/tencent/eastmoney，解析器固定在 `realtime.ts`，只启停/排序不增删）；`fetchRealtimeQuotes` 按 `sort` 升序**只循环启用源**，启用清单带 10s 进程缓存（启停最长 10s 生效）；空表自动补默认三源，**全部停用视为配置失误兜底用全量源**；管理面=设置页「行情管理」tab + `/api/stocks/manage/sources`（requireAdmin）
+- **行情数据源管理**：`realtime_source` 表（key=sina/tencent/eastmoney，解析器固定在 `realtime.ts`，只启停/排序不增删）；`fetchRealtimeQuotes` 按 `sort` 升序**只循环启用源**，启用清单带 10s 进程缓存（启停最长 10s 生效）；空表自动补默认三源，**全部停用视为配置失误兜底用全量源**；管理面=/data「数据中心-行情管理」tab + `/api/stocks/manage/sources`（requireAdmin）
 - **定时任务注册表**：`scheduler.ts` 的 `JOBS`（daily-close/intraday-alerts/sync-news/sync-lhb/sync-plates/sync-snapshot/sync-fundamentals/sync-plate-stocks）是唯一任务来源；`cron_job` 表存 cron/enabled 覆盖（仅改过的有行），`cron_run` 表存每次运行记录；运行时改 cron 走 `rescheduleJob()`（validate→destroy 旧 task→重排），手动触发走 `triggerJob()`（进程内 Set 互斥防重入）；`executeJob` 带 30 分钟超时看门狗（超时标 failed，finish 用 `status='running'` 守卫防迟到 handler 覆盖），启动时清理僵尸 running 记录（防进程重启后页面永远「运行中」）；cron 页「执行频率」列用 `src/utils/cron-human.ts` 的 `cronToHuman()` 转可读文本（编辑仍用表达式，草稿实时预览含义）
 - **注释以中文为主**；路径别名 `@/* → ./src/*`
 - **无测试框架**；`test/*.http` 用 REST Client 手动测
@@ -140,7 +140,7 @@ src/
 - **盘中每分钟**：sync-plates（腾讯行业/题材板块 + 选股宝板块涨/跌幅榜 → `plate_cache`，函数内卡 9:30-15:00；页面 `/api/stocks/plates` 只读库）
 - **盘中每 10 秒**：sync-snapshot（关注股=股票池∪持仓∪指数走实时行情多源写 `stock_trade` 当日行；函数内卡 9:30-15:00；**不做全市场盘中快照**——全市场由 sync-daily 16:00 同步，其他股票由 /api/stocks/real 穿透式回源按需落库）
 
-手动触发：`POST /api/ashare/sync?type=daily|news|signals|lhb|snapshot|fundamentals|plate-stocks|all`（登录 session 或 `Bearer $CRON_SECRET`；后三个新类型不含在 all 内）；`codes=` 参数可只回补指定股票历史，`type=lhb` 时 `date=` 可指定单日；**`from=&to=`（YYYY-MM-DD，单次 ≤31 天）按区间回补**——`type=lhb` 逐工作日回补（`syncLhbRange`，空榜日跳过写入防误清），`type=daily` 只补区间内有缺漏的活跃股（`backfillDailyRange` + `getCodesMissingInRange`，以区间最大条数近似交易日数）。UI 入口：/ashare「日行情补缺」、设置页「龙虎榜管理-历史回补」。admin 也可在 `/cron` 页面手动触发/改 cron/启停（`POST /api/cron/<id>/trigger`、`PUT /api/cron/<id>`）。
+手动触发：`POST /api/ashare/sync?type=daily|news|signals|lhb|snapshot|fundamentals|plate-stocks|all`（登录 session 或 `Bearer $CRON_SECRET`；后三个新类型不含在 all 内）；`codes=` 参数可只回补指定股票历史，`type=lhb` 时 `date=` 可指定单日；**`from=&to=`（YYYY-MM-DD，单次 ≤31 天）按区间回补**——`type=lhb` 逐工作日回补（`syncLhbRange`，空榜日跳过写入防误清），`type=daily` 只补区间内有缺漏的活跃股（`backfillDailyRange` + `getCodesMissingInRange`，以区间最大条数近似交易日数）。UI 入口：/data「行情管理-日行情补缺」、/data「龙虎榜管理-历史回补」。admin 也可在 `/cron` 页面手动触发/改 cron/启停（`POST /api/cron/<id>/trigger`、`PUT /api/cron/<id>`）。
 
 ## 数据源注意事项
 

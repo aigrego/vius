@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Plus } from 'lucide-react';
 
-/* 设置页「资讯管理」tab（仅 admin 渲染；接口侧同样由 requireAdmin 兜底）。
+/* 数据中心「资讯管理」tab（仅 admin 渲染；接口侧同样由 requireAdmin 兜底）。
    管理资讯快讯数据源（news_source 表，key 标识解析器），
    sync-news 定时任务每 15 秒轮询启用源抓取快讯并匹配个股落库。 */
 

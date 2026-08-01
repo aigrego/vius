@@ -54,7 +54,7 @@ const NAV_ITEMS: NavEntry[] = [
   },
   {
     icon: <Database size={16} />,
-    label: '数据管理',
+    label: '数据中心',
     href: '/data',
     match: (p) => p.startsWith('/data'),
   },
