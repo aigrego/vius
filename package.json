@@ -13,6 +13,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:view": "prisma studio",
     "db:seed": "tsx scripts/seed.ts",
+    "db:export": "node scripts/export-data.js",
+    "db:import": "node scripts/import-data.js",
     "postinstall": "prisma generate"
   },
   "dependencies": {

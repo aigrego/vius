@@ -31,6 +31,9 @@ next-env.d.ts
 # logs
 /logs
 
+# 数据备份（export-data.js 输出）
+/backups
+
 # local tooling
 .playwright-mcp/
 .chrome-profile/
