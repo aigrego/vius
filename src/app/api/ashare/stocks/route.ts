@@ -54,17 +54,53 @@ export const GET = async (request: NextRequest) => {
       })
     ]);
 
-    // 保持旧契约：code 为 6 位裸码、market 小写；附带市值等字典新字段
-    const list = rows.map(row => ({
-      code: parseFullCode(row.code).code,
-      name: row.name,
-      market: row.market.toLowerCase(),
-      listedDate: row.listedDate,
-      isActive: row.isActive,
-      updatedAt: row.updatedAt,
-      marketCap: row.marketCap,
-      floatMarketCap: row.floatMarketCap
-    }));
+    // 本页股票各自最近一条交易行（现价/涨跌幅/成交量/换手率/振幅）+ 所属板块（行业/题材）。
+    // 不用「全库最新交易日」：盘中快照只覆盖关注股，按全库最新日会大面积缺行；各取最近一行更贴合列表展示
+    const fullCodes = rows.map(r => r.code);
+    const [tradeRows, plateRows] = await Promise.all([
+      prisma.stockTrade.findMany({
+        where: { stockCode: { in: fullCodes } },
+        distinct: ['stockCode'],
+        orderBy: [{ stockCode: 'asc' }, { date: 'desc' }]
+      }),
+      prisma.plateStock.findMany({
+        where: { stockCode: { in: fullCodes } },
+        select: { stockCode: true, plate: { select: { name: true, kind: true } } }
+      })
+    ]);
+    const tradeMap = new Map(tradeRows.map(t => [t.stockCode, t]));
+    const plateMap = new Map<string, { industry: string[]; concept: string[] }>();
+    for (const pr of plateRows) {
+      const entry = plateMap.get(pr.stockCode) ?? { industry: [], concept: [] };
+      (pr.plate.kind === 'industry' ? entry.industry : entry.concept).push(pr.plate.name);
+      plateMap.set(pr.stockCode, entry);
+    }
+
+    // 保持旧契约：code 为 6 位裸码、market 小写；附带市值/最新行情快照/板块等扩展字段
+    const list = rows.map(row => {
+      const t = tradeMap.get(row.code);
+      const fin = (row.financials ?? null) as { pe?: number } | null;
+      const plates = plateMap.get(row.code);
+      return {
+        code: parseFullCode(row.code).code,
+        name: row.name,
+        market: row.market.toLowerCase(),
+        listedDate: row.listedDate,
+        isActive: row.isActive,
+        updatedAt: row.updatedAt,
+        marketCap: row.marketCap,
+        floatMarketCap: row.floatMarketCap,
+        pe: fin?.pe ?? null,
+        // 0 值按无数据展示（退市股历史行存在 0 价/0 量）
+        current: t?.current || null,
+        changePct: t?.changePct ?? null,
+        volume: t?.volume || null, // 手
+        turnover: t?.turnover || null, // %
+        amplitude: t?.amplitude || null, // %
+        industryPlates: plates?.industry ?? [],
+        conceptPlates: plates?.concept ?? []
+      };
+    });
 
     return NextResponse.json({
       code: 200,

@@ -15,16 +15,18 @@ import {
 } from '@/components/ui/table';
 import { StockDetailModal } from '@/components/stock-pool/stock-detail-modal';
 import { RealtimeStock } from '@/hooks/useRealtimeData';
-import { RefreshCw, TrendingUp, TrendingDown, CalendarDays } from 'lucide-react';
+import { ImportDialog } from '@/app/(app)/analysis/ImportDialog';
+import { RefreshCw, TrendingUp, TrendingDown, CalendarDays, Upload } from 'lucide-react';
 
 // 信号类型：底部放量 / 顶部放量（与后端 stock_signal.type 一致）
 type SignalType = 'bottom_volume' | 'top_volume';
 
 interface SignalDetail {
   volumeRatio: number;
-  position: number;
+  position: number | null; // 外部导入的信号无 120 日区间数据，为 null
   changePct: number;
   close: number;
+  drawdown?: number | null; // 外部导入特有：相对近一年高点的回撤%
 }
 
 interface Signal {
@@ -41,21 +43,30 @@ const SignalTypeTabs: { value: SignalType; label: string }[] = [
   { value: 'top_volume', label: '顶部放量' },
 ];
 
-// detail 字段后端约定为已 parse 的对象，这里兜底兼容字符串
-function parseDetail(detail: unknown): SignalDetail | null {
-  if (!detail) return null;
-  if (typeof detail === 'string') {
+// detail 字段后端约定为已 parse 的对象，这里兜底兼容字符串；各字段空值归一
+function parseDetail(detail: unknown): SignalDetail {
+  let raw: Partial<SignalDetail> | null = null;
+  if (detail && typeof detail === 'string') {
     try {
-      return JSON.parse(detail) as SignalDetail;
+      raw = JSON.parse(detail) as Partial<SignalDetail>;
     } catch {
-      return null;
+      raw = null;
     }
+  } else if (detail) {
+    raw = detail as Partial<SignalDetail>;
   }
-  return detail as SignalDetail;
+  return {
+    volumeRatio: raw?.volumeRatio ?? 0,
+    position: raw?.position ?? null,
+    changePct: raw?.changePct ?? 0,
+    close: raw?.close ?? 0,
+    drawdown: raw?.drawdown ?? null,
+  };
 }
 
-// 位置分位可能是 0-1 小数或 0-100 百分数，统一按百分数展示
-function formatPosition(position: number): string {
+// 位置分位可能是 0-1 小数或 0-100 百分数，统一按百分数展示；外部导入无此值
+function formatPosition(position: number | null): string {
+  if (position == null) return '-';
   const pct = position <= 1 ? position * 100 : position;
   return `${pct.toFixed(0)}%`;
 }
@@ -79,6 +90,7 @@ export default function StockPoolAnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [detailStock, setDetailStock] = useState<RealtimeStock | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const fetchSignals = useCallback(async () => {
     try {
@@ -110,7 +122,7 @@ export default function StockPoolAnalysisPage() {
           market: item.market,
           type: item.type,
           date: item.date,
-          detail: parseDetail(item.detail) ?? { volumeRatio: 0, position: 0, changePct: 0, close: 0 },
+          detail: parseDetail(item.detail),
         }))
       );
     } catch (e) {
@@ -124,6 +136,16 @@ export default function StockPoolAnalysisPage() {
   useEffect(() => {
     fetchSignals();
   }, [fetchSignals]);
+
+  // 导入成功：切到导入的类型/日期刷新（同值时状态不变化，手动补一次刷新）
+  const handleImported = (d: string, t: SignalType) => {
+    if (d === date && t === signalType) {
+      fetchSignals();
+    } else {
+      setSignalType(t);
+      setDate(d);
+    }
+  };
 
   // 点击行：用信号数据合成 RealtimeStock，受控打开个股详情弹窗
   const openDetail = (signal: Signal) => {
@@ -172,6 +194,14 @@ export default function StockPoolAnalysisPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setImportOpen(true)}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              导入信号
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -243,6 +273,7 @@ export default function StockPoolAnalysisPage() {
                   <TableHead className="text-right">当日涨跌幅</TableHead>
                   <TableHead className="text-right">量比</TableHead>
                   <TableHead className="text-right">位置分位</TableHead>
+                  <TableHead className="text-right">回撤%</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -274,26 +305,29 @@ export default function StockPoolAnalysisPage() {
                       <TableCell className="text-right font-mono">
                         {formatPosition(signal.detail.position)}
                       </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {signal.detail.drawdown != null ? `${signal.detail.drawdown.toFixed(1)}%` : '-'}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
                 {!loading && !error && signals.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-fg-3">
+                    <TableCell colSpan={8} className="text-center py-8 text-fg-3">
                       该日期暂无{SignalTypeTabs.find(t => t.value === signalType)?.label}信号
                     </TableCell>
                   </TableRow>
                 )}
                 {loading && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-fg-3">
+                    <TableCell colSpan={8} className="text-center py-8 text-fg-3">
                       加载中...
                     </TableCell>
                   </TableRow>
                 )}
                 {!loading && error && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8">
+                    <TableCell colSpan={8} className="text-center py-8">
                       <div className="text-yellow-400">⚠️ {error}</div>
                       <Button
                         variant="secondary"
@@ -317,6 +351,13 @@ export default function StockPoolAnalysisPage() {
         stock={detailStock}
         open={detailOpen}
         onOpenChange={setDetailOpen}
+      />
+
+      {/* 放量信号导入弹窗 */}
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={handleImported}
       />
     </div>
   );

@@ -7,12 +7,12 @@ import {
   DialogContent,
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RealtimeStock } from '@/hooks/useRealtimeData';
 import { StockChart } from '@/components/stock-pool/stock-chart';
 import { StockChips } from '@/components/stock-pool/stock-chips';
 import { StockNews } from '@/components/stock-pool/stock-news';
+import { toDisplayCode } from '@/utils/stock-code';
 import { TrendingUp, TrendingDown, DollarSign, BarChart3, Clock, Layers, Newspaper, Activity } from 'lucide-react';
 
 interface StockDetailModalProps {
@@ -25,10 +25,11 @@ type DetailTab = 'kline' | 'chips' | 'news';
 
 /* 打开时按 code 补拉实时行情（/api/stocks/real）合并进展示数据：
    从快讯/排行/龙虎榜等入口打开时调用方只传了基础信息（行情字段为 0），
-   由弹窗自己补齐当前价/今开/昨收/最高/最低/成交量/流通市值等；cost/pnl 仍以调用方传入为准 */
+   由弹窗自己补齐当前价/今开/昨收/最高/最低/成交量/换手率/总市值/流通市值等；cost/pnl 仍以调用方传入为准 */
 const REAL_FIELDS = [
   'prod_name', 'last_px', 'px_change_rate', 'open_px', 'preclose_px',
-  'high_px', 'low_px', 'turnover_volume', 'turnover_value', 'circulation_value'
+  'high_px', 'low_px', 'turnover_volume', 'turnover_value', 'turnover_ratio',
+  'market_value', 'circulation_value'
 ];
 
 // market 为空时按代码前缀推断完整代码（6→SS，0/3→SZ，4/8/920→BJ）
@@ -105,8 +106,10 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
     merged.name = String(row[0] || merged.name);
   }
 
-  // 流通市值（元）来自快照 circulation_value；美股/港股走兜底源时为 0，展示 '-'
-  const circulationValue = row ? Number(row[9]) || 0 : 0;
+  // 换手率 / 总市值 / 流通市值（元）来自快照；美股/港股走兜底源时为 0，展示 '-'
+  const turnoverRatio = row ? Number(row[9]) || 0 : 0;
+  const marketValue = row ? Number(row[10]) || 0 : 0;
+  const circulationValue = row ? Number(row[11]) || 0 : 0;
   // 振幅 = (最高 − 最低) / 昨收 × 100%
   const amplitude = merged.close > 0 ? ((merged.high - merged.low) / merged.close) * 100 : 0;
   const isUp = merged.changePct > 0;
@@ -118,30 +121,27 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
         {/* vius 的 Dialog 无 DialogHeader/DialogTitle，用普通 div 代替 */}
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-2xl font-mono font-semibold">{merged.code}</div>
+            {/* 标题用 SH/SZ/BJ 后缀风格展示代码（toFullCode 的 SS 风格仅用于行情接口入参） */}
+            <div className="text-2xl font-mono font-semibold">{toDisplayCode(merged.code, merged.market)}</div>
             <p className="text-fg-3">{merged.name}</p>
           </div>
-          <div className="flex gap-2">
-            <Badge tone="neutral" className="text-lg px-3 py-1">
-              {(merged.market || 'unknown').toUpperCase()}
-            </Badge>
-            <Badge
-              tone={isUp ? 'success' : 'danger'}
-              className="text-lg px-3 py-1"
-            >
-              {isUp ? '+' : ''}{merged.changePct}%
-            </Badge>
+          <div className="flex items-center gap-1.5 text-xs text-fg-3 whitespace-nowrap">
+            <Clock className="w-3.5 h-3.5" />
+            <span>最后更新：{merged.updatedAt ? new Date(merged.updatedAt).toLocaleString('zh-CN') : '-'}</span>
           </div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
           <Card className="bg-bg border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs text-fg-3 font-normal">当前价格</CardTitle>
+              <CardTitle className="text-xs text-fg-3 font-normal">当前价格（涨跌幅）</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className={`whitespace-nowrap text-2xl font-mono font-bold ${isUp ? 'text-up' : 'text-down'}`}>
-                ¥{merged.current?.toFixed(2) || '-'}
+              <div className={`flex items-baseline gap-2 whitespace-nowrap ${isUp ? 'text-up' : 'text-down'}`}>
+                <span className="text-2xl font-mono font-bold">¥{merged.current?.toFixed(2) || '-'}</span>
+                <span className="text-sm font-mono font-semibold">
+                  {merged.changePct > 0 ? '+' : ''}{merged.changePct?.toFixed(2)}%
+                </span>
               </div>
             </CardContent>
           </Card>
@@ -160,22 +160,26 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
 
           <Card className="bg-bg border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs text-fg-3 font-normal">成交量</CardTitle>
+              <CardTitle className="text-xs text-fg-3 font-normal">成交量（换手率）</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="whitespace-nowrap text-2xl font-mono font-bold">
-                {formatVolume(merged.volume)}
+              <div className="flex items-baseline gap-2 whitespace-nowrap">
+                <span className="text-2xl font-mono font-bold">{formatVolume(merged.volume)}</span>
+                <span className="text-sm font-mono text-fg-3">
+                  换手 {turnoverRatio > 0 ? `${turnoverRatio.toFixed(2)}%` : '-'}
+                </span>
               </div>
             </CardContent>
           </Card>
 
           <Card className="bg-bg border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs text-fg-3 font-normal">流通市值</CardTitle>
+              <CardTitle className="text-xs text-fg-3 font-normal">流通市值（股票总市值）</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="whitespace-nowrap text-2xl font-mono font-bold">
-                {formatMarketValue(circulationValue)}
+              <div className="flex items-baseline gap-2 whitespace-nowrap">
+                <span className="text-2xl font-mono font-bold">{formatMarketValue(circulationValue)}</span>
+                <span className="text-sm font-mono text-fg-3">总 {formatMarketValue(marketValue)}</span>
               </div>
             </CardContent>
           </Card>
@@ -212,15 +216,6 @@ export function StockDetailModal({ stock, open, onOpenChange }: StockDetailModal
             <span className="font-mono">{amplitude > 0 ? `${amplitude.toFixed(2)}%` : '-'}</span>
           </div>
         </div>
-
-        {merged.volume > 0 && (
-          <div className="mt-4 pt-4 border-t border-border">
-            <div className="flex items-center gap-2 text-sm text-fg-3">
-              <Clock className="w-4 h-4" />
-              <span>最后更新: {merged.updatedAt ? new Date(merged.updatedAt).toLocaleString('zh-CN') : '-'}</span>
-            </div>
-          </div>
-        )}
 
         {/* K线 / 筹码分布 / 相关资讯（超高时仅本内容块纵向滚动，弹窗壳不滚动） */}
         <div className="mt-6 flex min-h-0 flex-1 flex-col">

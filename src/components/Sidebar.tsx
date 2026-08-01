@@ -3,13 +3,14 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, KeyRound, LayoutGrid, LineChart, ListChecks, Settings, Timer, Trophy, Wallet } from 'lucide-react';
+import { Activity, Database, KeyRound, LayoutGrid, LineChart, ListChecks, Newspaper, Settings, Timer, Trophy, Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-/* 左侧 244px 导航栏：行情总览 / 股票池 / 持仓股 / A股总览 / 放量信号 / 龙虎榜，
+/* 左侧 244px 导航栏：行情总览 / 股票池 / 持仓股 / A股总览 / 资讯管理 / 数据管理 / 放量信号 / 龙虎榜，
    底部固定「Agent 接入 / 设置」入口（「定时任务」按权限插入）。
    用 usePathname 高亮当前项（选中态为品牌色淡底 + 品牌色文字）。
-   入口可见性按 /api/auth/permissions 的路由权限档过滤：hidden 不显示。 */
+   入口可见性按 /api/auth/permissions 的路由权限档过滤：hidden 不显示；
+   /news /data 是 /ashare 拆出的子页面，权限档依附 /ashare。 */
 
 interface NavEntry {
   icon: React.ReactNode;
@@ -44,6 +45,18 @@ const NAV_ITEMS: NavEntry[] = [
     label: 'A股总览',
     href: '/ashare',
     match: (p) => p.startsWith('/ashare'),
+  },
+  {
+    icon: <Newspaper size={16} />,
+    label: '资讯管理',
+    href: '/news',
+    match: (p) => p.startsWith('/news'),
+  },
+  {
+    icon: <Database size={16} />,
+    label: '数据管理',
+    href: '/data',
+    match: (p) => p.startsWith('/data'),
   },
   {
     icon: <Activity size={16} />,
@@ -125,8 +138,10 @@ export function Sidebar() {
     };
   }, []);
 
+  // /news /data 依附 /ashare 权限档（A股总览拆出的子页面）
+  const LEVEL_ALIAS: Record<string, string> = { '/news': '/ashare', '/data': '/ashare' };
   // 按权限档过滤：hidden 隐藏入口；levels 未拉到前保持现状全部显示（避免闪烁）
-  const visible = (href: string) => !levels || levels[href] !== 'hidden';
+  const visible = (href: string) => !levels || levels[LEVEL_ALIAS[href] ?? href] !== 'hidden';
   const navItems = NAV_ITEMS.filter((item) => visible(item.href));
 
   // 底部固定入口：Agent 接入（按权限）/ 定时任务（拉到 levels 且非 hidden 才插入）/ 设置（恒显示）

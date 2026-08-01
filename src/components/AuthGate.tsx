@@ -27,9 +27,10 @@ function GateSkeleton() {
 }
 
 /* 当前路径命中的治理路由（levels 的 key 即治理路由清单，最长前缀匹配；
-   /stock/[code] 个股详情页归属 /dashboard）。 */
+   /stock/[code] 个股详情页归属 /dashboard；/news /data 依附 /ashare 档）。 */
 function governedRouteOf(pathname: string, levels: Record<string, string>): string | null {
   if (pathname.startsWith('/stock')) return '/dashboard';
+  if (pathname.startsWith('/news') || pathname.startsWith('/data')) return '/ashare';
   const hit = Object.keys(levels)
     .filter((r) => pathname === r || pathname.startsWith(r + '/'))
     .sort((a, b) => b.length - a.length)[0];

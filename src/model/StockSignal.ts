@@ -30,6 +30,32 @@ export const upsertStockSignals = async (signals: TStockSignalInput[]): Promise<
   return signals.length;
 };
 
+// 导入外部工具信号：逐行 upsert 覆盖 detail（外部文件可能修正重导，与 skipDuplicates 的日内幂等不同）
+export const importStockSignals = async (signals: TStockSignalInput[]): Promise<number> => {
+  if (signals.length === 0) return 0;
+  await prisma.$transaction(
+    signals.map(signal =>
+      prisma.stockSignal.upsert({
+        where: {
+          stockCode_date_type: {
+            stockCode: signal.stockCode,
+            date: toUtcDate(signal.date),
+            type: signal.type
+          }
+        },
+        create: {
+          stockCode: signal.stockCode,
+          date: toUtcDate(signal.date),
+          type: signal.type,
+          detail: signal.detail ?? null
+        },
+        update: { detail: signal.detail ?? null }
+      })
+    )
+  );
+  return signals.length;
+};
+
 // 查询信号（关联 stock_dict 带上股票名称/市场），按日期倒序
 export const getStockSignals = async (options: {
   type?: string;
