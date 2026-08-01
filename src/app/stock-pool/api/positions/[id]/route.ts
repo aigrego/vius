@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import { requireRouteAccess } from '@/lib/route-perm';
+import { parseFullCode } from '@/lib/stock-code';
 import prisma from '@/lib/prisma';
 
 // PUT /api/positions/[id] - 更新持仓记录（仅买入价/数量可改，代码不可变；按用户隔离）
@@ -74,11 +75,23 @@ export async function PUT(
       );
     }
 
-    const position = await prisma.position.findUnique({ where: { id: positionId } });
+    const position = await prisma.position.findUnique({
+      where: { id: positionId },
+      include: { stock: true }
+    });
 
+    // 展开字典关联为旧契约字段（code 裸码 / name / market 小写）
+    const { stock, ...row } = position!;
     return NextResponse.json({
       success: true,
-      data: { ...position, price: Number(position!.price) }
+      data: {
+        ...row,
+        code: parseFullCode(row.stockCode).code,
+        name: stock.name,
+        market: stock.market.toLowerCase(),
+        price: Number(row.price),
+        sellPrice: row.sellPrice === null ? null : Number(row.sellPrice)
+      }
     });
 
   } catch (error) {

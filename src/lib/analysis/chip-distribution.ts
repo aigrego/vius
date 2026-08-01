@@ -3,7 +3,7 @@
 // 铺在 [low, high] 区间（峰值在当日均价），最终归一化得到各价格格的筹码占比
 
 export interface ChipDailyBar {
-  close: number;
+  current: number; // 最新价/收盘价（stock_trade.current；盘后为收盘价）
   high: number;
   low: number;
   volume: number; // 单位：手（1手=100股）
@@ -26,7 +26,7 @@ export interface ChipDistribution {
 
 const BIN_COUNT = 60; // 价格轴格数
 
-// 输入按日期升序的日线（含换手率），currentPrice 缺省取最后一根收盘价
+// 输入按日期升序的日线（含换手率），currentPrice 缺省取最后一根的最新价/收盘价
 export function calculateChipDistribution(
   dailies: ChipDailyBar[],
   currentPrice?: number
@@ -56,10 +56,10 @@ export function calculateChipDistribution(
       chips[i]! *= 1 - t;
     }
 
-    // 当日均价：amount / (volume*100)，除零兜底用 (high+low+close)/3
+    // 当日均价：amount / (volume*100)，除零兜底用 (high+low+current)/3
     const avgPrice = day.volume > 0
       ? day.amount / (day.volume * 100)
-      : (day.high + day.low + day.close) / 3;
+      : (day.high + day.low + day.current) / 3;
     const peak = Math.min(Math.max(avgPrice, day.low), day.high);
 
     // 当日换手筹码按三角分布铺在 [low, high]，峰值在均价
@@ -92,7 +92,7 @@ export function calculateChipDistribution(
     ratio: v / total
   }));
 
-  const price = currentPrice ?? dailies[dailies.length - 1]!.close;
+  const price = currentPrice ?? dailies[dailies.length - 1]!.current;
 
   // 获利盘比例：现价以下筹码占比
   let profitRatio = 0;

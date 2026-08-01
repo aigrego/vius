@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import { requireRouteAccess } from '@/lib/route-perm';
+import { parseFullCode } from '@/lib/stock-code';
 import prisma from '@/lib/prisma';
 
 // POST /api/positions/[id]/sell - 卖出持仓（全部或部分；部分卖出拆行：原记录减量 + 新建一条 sold 记录）
@@ -44,9 +45,10 @@ export async function POST(
       );
     }
 
-    // 需要原记录数据做拆行，先按 id + userId 查出（天然限定归属）
+    // 需要原记录数据做拆行，先按 id + userId 查出（天然限定归属）；带上字典名称供审计/响应使用
     const position = await prisma.position.findFirst({
-      where: { id: positionId, userId: session.uid }
+      where: { id: positionId, userId: session.uid },
+      include: { stock: true }
     });
     if (!position) {
       return NextResponse.json(
@@ -85,7 +87,7 @@ export async function POST(
         data: { status: 'sold', sellPrice: sellPriceNum, soldAt }
       }));
     } else {
-      // 部分卖出：原记录减量（仍 holding），新建一条同买入价的 sold 记录
+      // 部分卖出：原记录减量（仍 holding），新建一条同买入价的 sold 记录（名称/市场以字典为准，不再冗余）
       ops.push(prisma.position.update({
         where: { id: positionId },
         data: { quantity: position.quantity - sellQty }
@@ -93,9 +95,7 @@ export async function POST(
       ops.push(prisma.position.create({
         data: {
           userId: session.uid,
-          code: position.code,
-          name: position.name,
-          market: position.market,
+          stockCode: position.stockCode,
           price: position.price,
           quantity: sellQty,
           status: 'sold',
@@ -107,8 +107,8 @@ export async function POST(
     ops.push(prisma.auditLog.create({
       data: {
         action: 'SELL',
-        code: position.code,
-        details: `Sold position: ${position.name} (${position.code}) ${sellQty}股 @ ${sellPriceNum}（买入价 ${buyPrice}，已实现盈亏 ${realizedPnl.toFixed(2)}）`,
+        code: position.stockCode,
+        details: `Sold position: ${position.stock.name} (${position.stockCode}) ${sellQty}股 @ ${sellPriceNum}（买入价 ${buyPrice}，已实现盈亏 ${realizedPnl.toFixed(2)}）`,
         agentId
       }
     }));
@@ -119,7 +119,7 @@ export async function POST(
       success: true,
       data: {
         id: positionId,
-        code: position.code,
+        code: parseFullCode(position.stockCode).code,
         sellQuantity: sellQty,
         sellPrice: sellPriceNum,
         realizedPnl,

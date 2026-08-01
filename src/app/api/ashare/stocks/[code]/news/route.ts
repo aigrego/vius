@@ -1,6 +1,7 @@
 import { handleApiError } from '@/utils/api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { getNewsByCode } from '@/model/NewsFlash';
+import { toFullCode } from '@/lib/stock-code';
 import { requireRouteAccess } from '@/lib/route-perm';
 
 // 声明为动态路由
@@ -33,7 +34,8 @@ export const GET = async (
       Math.max(1, parseInt(searchParams.get('limit') || '30', 10) || 30)
     );
 
-    const news = await getNewsByCode(code, limit);
+    // news_stock 以 fullCode 关联，裸码按 A 股前缀推断市场
+    const news = await getNewsByCode(toFullCode(code), limit);
 
     return NextResponse.json({
       code: 200,

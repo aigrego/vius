@@ -1,10 +1,11 @@
 // 告警检查核心逻辑（从 /api/alerts/check 路由抽出，供路由与定时任务复用）
 
 import prisma from '@/lib/prisma';
-import { Alert, AlertConfig, checkStockAlerts } from '@/lib/alerts';
+import { Alert, AlertConfig, QuoteData, checkStockAlerts } from '@/lib/alerts';
 import { pushAlertsToFeishu } from '@/lib/feishu';
-import { fetchRealtimeQuotes } from '@/lib/realtime';
-import { getAvgVolume } from '@/model/StockDaily';
+import { fetchRealtimeQuotes, type RealtimeQuote } from '@/lib/realtime';
+import { parseFullCode } from '@/lib/stock-code';
+import { getAvgVolume, getTradesByDate } from '@/model/StockTrade';
 
 // 告警冷却时间：同 code + alertType 30 分钟内只记录/推送一次
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
@@ -56,20 +57,35 @@ export function normalizeAlertsJson(raw: Record<string, unknown>): AlertConfig['
 export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<AlertCheckResult> {
   const { force = false, noFeishu = false, userId, username } = options;
 
-  // 获取股票（传 userId 时只查该用户的池子）
-  const stocks = await prisma.watchlist.findMany(userId ? { where: { userId } } : undefined);
+  // 获取股票（传 userId 时只查该用户的池子）；名称/市场从 stock_dict 关联获得
+  const stocks = await prisma.watchlist.findMany({
+    ...(userId ? { where: { userId } } : {}),
+    include: { stock: true }
+  });
 
-  // 获取实时行情
-  const codes = stocks.map(s => s.code);
-  const realtimeQuotes = codes.length > 0 ? await fetchRealtimeQuotes(codes) : [];
+  // 价格来源优先读库（sync-snapshot 盘中每分钟/sync-daily 收盘后已落当日行，量比单位已是手）；
+  // 库中无当日行（盘前/停牌/字典外股票）的代码兜底实时行情三源
+  const fullCodes = stocks.map(s => s.stockCode);
+  const trades = fullCodes.length > 0 ? await getTradesByDate(fullCodes) : new Map();
+  const missingFullCodes = fullCodes.filter(c => trades.get(c)?.current == null);
+  const realtimeByFullCode = new Map<string, RealtimeQuote>();
+  if (missingFullCodes.length > 0) {
+    const parsed = missingFullCodes.map(c => parseFullCode(c));
+    const quotes = await fetchRealtimeQuotes(
+      parsed.map(p => p.code),
+      parsed.map(p => p.market.toLowerCase())
+    );
+    const fullCodeByBare = new Map(parsed.map((p, i) => [p.code.toUpperCase(), missingFullCodes[i]!]));
+    for (const q of quotes) {
+      const fullCode = fullCodeByBare.get(q.code.toUpperCase());
+      if (fullCode) realtimeByFullCode.set(fullCode, q);
+    }
+  }
 
   const triggeredAlerts: Alert[] = [];
 
   // 检查每只股票的预警
   for (const stock of stocks) {
-    const quote = realtimeQuotes.find(q => q.code === stock.code);
-    if (!quote) continue;
-
     let raw: Record<string, unknown>;
     try {
       raw = JSON.parse(stock.alertsJson || '{}');
@@ -79,27 +95,39 @@ export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<Al
     const alerts = normalizeAlertsJson(raw);
     if (Object.values(alerts).every(v => v === undefined)) continue;
 
-    // 注入近 5 日均量（库中单位：手），修复 volumeAbove 因 avgVolume 缺失永不触发的问题
-    // 新浪源的实时成交量单位是股（×100 换算），腾讯/东财源是手，直接可用
-    let avgVolume: number | undefined;
-    const avg = await getAvgVolume(stock.code, 5);
-    if (avg !== null && avg > 0) {
-      avgVolume = quote.source === 'sina' ? avg * 100 : avg;
+    // 构造行情：库中当日行优先（volume 已是手，不做换算）；
+    // 兜底实时行情的新浪源成交量单位是股（×100 适配均量），腾讯/东财源是手
+    const trade = trades.get(stock.stockCode);
+    const realtime = realtimeByFullCode.get(stock.stockCode);
+    let quoteData: QuoteData | null = null;
+    if (trade && trade.current != null) {
+      const avg = await getAvgVolume(stock.stockCode, 5);
+      quoteData = {
+        current: trade.current,
+        changePct: trade.changePct ?? 0,
+        volume: trade.volume ?? 0,
+        avgVolume: avg !== null && avg > 0 ? avg : undefined
+      };
+    } else if (realtime) {
+      // 注入近 5 日均量（库中单位：手），修复 volumeAbove 因 avgVolume 缺失永不触发的问题
+      const avg = await getAvgVolume(stock.stockCode, 5);
+      quoteData = {
+        current: realtime.current,
+        changePct: realtime.changePct,
+        volume: realtime.volume,
+        avgVolume: avg !== null && avg > 0 ? (realtime.source === 'sina' ? avg * 100 : avg) : undefined
+      };
     }
+    if (!quoteData) continue;
 
     const stockConfig: AlertConfig = {
-      code: stock.code,
-      name: stock.name,
+      code: stock.stockCode,
+      name: stock.stock.name,
       cost: Number(stock.cost),
       alerts
     };
 
-    const stockAlerts = checkStockAlerts(stockConfig, {
-      current: quote.current,
-      changePct: quote.changePct,
-      volume: quote.volume,
-      avgVolume
-    });
+    const stockAlerts = checkStockAlerts(stockConfig, quoteData);
 
     triggeredAlerts.push(...stockAlerts);
   }
@@ -118,8 +146,11 @@ export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<Al
     skippedCount = triggeredAlerts.length - alertsToSave.length;
   }
 
-  // 批量写入数据库（带归属用户）
+  // 批量写入数据库（带归属用户；code 为 fullCode，varchar(20) 够放）
   if (alertsToSave.length > 0) {
+    // currentValue/thresholdValue 是 Decimal(10,4)（上限 10^6）：成交量类告警的值
+    // 可能超过（大盘股日成交量可达数百万手），超出时钳制到上限防止 numeric overflow
+    const fitDecimal = (v: number): number => Math.min(Math.max(v, -999999.9999), 999999.9999);
     await prisma.alertHistory.createMany({
       data: alertsToSave.map(alert => ({
         userId: userId ?? null,
@@ -127,8 +158,8 @@ export async function runAlertCheck(options: AlertCheckOptions = {}): Promise<Al
         alertType: alert.type,
         severity: alert.severity,
         message: alert.message,
-        currentValue: alert.currentValue,
-        thresholdValue: alert.thresholdValue
+        currentValue: fitDecimal(alert.currentValue),
+        thresholdValue: fitDecimal(alert.thresholdValue)
       }))
     });
   }

@@ -20,27 +20,27 @@ export type TAshareStats = {
 
 const FULL_HISTORY_BARS = 250;
 
-// 汇总 stock_basic / stock_daily / stock_signal / news_flash 的核心统计
+// 汇总 stock_dict / stock_trade / stock_signal / news_flash 的核心统计
 export const getAshareStats = async (): Promise<TAshareStats> => {
   const [stocks, latestDaily, fullHistoryRows, latestSignal, newsTotal, newsMatched, latestNews] =
     await Promise.all([
-      prisma.stockBasic.count({ where: { isActive: true } }),
-      prisma.stockDaily.findFirst({ orderBy: { date: 'desc' }, select: { date: true } }),
+      prisma.stockDict.count({ where: { isActive: true, type: 'stock' } }),
+      prisma.stockTrade.findFirst({ orderBy: { date: 'desc' }, select: { date: true } }),
       // 历史已满（>=250 根）的股票数：groupBy having 的子查询计数
       prisma.$queryRaw<{ cnt: bigint }[]>`
         SELECT COUNT(*) AS cnt FROM (
-          SELECT code FROM stock_daily GROUP BY code HAVING COUNT(*) >= ${FULL_HISTORY_BARS}
+          SELECT stock_code FROM stock_trade GROUP BY stock_code HAVING COUNT(*) >= ${FULL_HISTORY_BARS}
         ) t
       `,
       prisma.stockSignal.findFirst({ orderBy: { date: 'desc' }, select: { date: true } }),
       prisma.newsFlash.count(),
-      prisma.newsFlash.count({ where: { codes: { not: null } } }),
+      prisma.newsFlash.count({ where: { newsStocks: { some: {} } } }),
       prisma.newsFlash.findFirst({ orderBy: { publishedAt: 'desc' }, select: { publishedAt: true } })
     ]);
 
   const dailyDate = latestDaily?.date ?? null;
   const dailyCount = dailyDate
-    ? await prisma.stockDaily.count({ where: { date: dailyDate } })
+    ? await prisma.stockTrade.count({ where: { date: dailyDate } })
     : 0;
 
   // 最新信号日期的两类信号计数

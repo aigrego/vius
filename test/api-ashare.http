@@ -30,6 +30,17 @@ Authorization: Bearer {{cronSecret}}
 POST {{base}}/api/ashare/sync?type=daily&codes=600519,000001
 Authorization: Bearer {{cronSecret}}
 
+### 板块成分股（code 需 URL 编码：`xgb:886001` → `xgb%3A886001`；404 表示板块未入库）
+GET {{base}}/api/stocks/plates/xgb%3A886001/stocks
+
+### 手动同步-行情快照（snapshot）
+POST {{base}}/api/ashare/sync?type=snapshot
+Authorization: Bearer {{cronSecret}}
+
+### 手动同步-板块成分股（plate-stocks）
+POST {{base}}/api/ashare/sync?type=plate-stocks
+Authorization: Bearer {{cronSecret}}
+
 ### 登录（账号密码）
 POST {{base}}/api/auth/login
 Content-Type: application/json

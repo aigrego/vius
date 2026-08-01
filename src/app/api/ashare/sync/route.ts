@@ -3,20 +3,23 @@ import { requireRouteAccess } from '@/lib/route-perm';
 import { syncDailyStocks, backfillDailyRange } from '@/lib/jobs/sync-daily';
 import { syncNews } from '@/lib/jobs/sync-news';
 import { syncLhb, syncLhbRange } from '@/lib/jobs/sync-lhb';
+import { syncSnapshot } from '@/lib/jobs/sync-snapshot';
+import { syncFundamentals } from '@/lib/jobs/sync-fundamentals';
+import { syncPlateStocks } from '@/lib/jobs/sync-plates';
 import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
-import { getLatestDailyDate } from '@/model/StockDaily';
+import { getLatestTradeDate } from '@/model/StockTrade';
 import { parseDateRange } from '@/lib/trading-days';
 
 // 声明为动态路由
 export const dynamic = 'force-dynamic';
 
-const VALID_TYPES = ['daily', 'news', 'signals', 'lhb', 'all'];
+const VALID_TYPES = ['daily', 'news', 'signals', 'lhb', 'all', 'snapshot', 'fundamentals', 'plate-stocks'];
 
 // 单次区间回补的最长跨度（按天/按周场景足够；防一次回补拖垮数据源）
 const MAX_RANGE_DAYS = 31;
 
-// POST /api/ashare/sync?type=daily|news|signals|lhb|all - 手动触发同步任务（需登录）
-// type=all 时按 daily → signals 顺序执行（信号依赖当日日线），news 独立执行，lhb 不参与 all
+// POST /api/ashare/sync?type=daily|news|signals|lhb|snapshot|fundamentals|plate-stocks|all - 手动触发同步任务（需登录）
+// type=all 时按 daily → signals 顺序执行（信号依赖当日日线），news 独立执行，lhb/snapshot/fundamentals/plate-stocks 不参与 all
 // 区间回补：type=daily|lhb 时 from=YYYY-MM-DD&to=YYYY-MM-DD 按区间补缺（lhb 逐工作日，daily 只补缺漏股）
 export const POST = async (request: NextRequest) => {
   try {
@@ -68,9 +71,9 @@ export const POST = async (request: NextRequest) => {
       }
     }
 
-    // 信号检测（signals / all）：依赖当日日线，取库中最新日线日期
+    // 信号检测（signals / all）：依赖当日交易行，取库中最新交易日期
     if (type === 'signals' || type === 'all') {
-      const latestDate = await getLatestDailyDate();
+      const latestDate = await getLatestTradeDate();
       if (latestDate) {
         result.signals = await runVolumeSignalJob(latestDate.toISOString().slice(0, 10));
       } else {
@@ -92,6 +95,21 @@ export const POST = async (request: NextRequest) => {
         const date = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : undefined;
         result.lhb = await syncLhb(date);
       }
+    }
+
+    // 盘中快照（snapshot）：关注股 + 全市场当日交易行刷新
+    if (type === 'snapshot') {
+      result.snapshot = await syncSnapshot();
+    }
+
+    // 基本面回填（fundamentals）：市值/主营业务/盈利构成/财务指标
+    if (type === 'fundamentals') {
+      result.fundamentals = await syncFundamentals();
+    }
+
+    // 板块成分股（plate-stocks）：plate/plate_stock 关系刷新
+    if (type === 'plate-stocks') {
+      result.plateStocks = await syncPlateStocks();
     }
 
     return NextResponse.json({

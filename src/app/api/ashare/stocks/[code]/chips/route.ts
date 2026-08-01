@@ -1,6 +1,7 @@
 import { handleApiError } from '@/utils/api-response';
 import { NextResponse } from 'next/server';
-import { getStockDailies } from '@/model/StockDaily';
+import { getStockTrades } from '@/model/StockTrade';
+import { toFullCode } from '@/lib/stock-code';
 import { calculateChipDistribution } from '@/lib/analysis/chip-distribution';
 import { requireRouteAccess } from '@/lib/route-perm';
 
@@ -31,20 +32,32 @@ export const GET = async (
       );
     }
 
-    // model 层按日期倒序返回，翻转为升序供筹码计算
-    const dailies = (await getStockDailies(code, DAILY_LIMIT)).reverse();
+    // model 层按日期倒序返回，翻转为升序供筹码计算；
+    // stock_trade 字段可空，价格/量额不全的行剔除（turnover 可为 null，计算时自动跳过该日）
+    const bars = (await getStockTrades(toFullCode(code), DAILY_LIMIT))
+      .reverse()
+      .filter(t => t.current != null && t.high != null && t.low != null && t.volume != null && t.amount != null)
+      .map(t => ({
+        date: t.date.toISOString().slice(0, 10),
+        current: t.current!,
+        high: t.high!,
+        low: t.low!,
+        volume: t.volume!,
+        amount: t.amount!,
+        turnover: t.turnover
+      }));
 
-    if (dailies.length < MIN_BARS) {
+    if (bars.length < MIN_BARS) {
       // 数据不足不抛错，用统一响应结构告知前端
       return NextResponse.json({
         code: 4001,
         data: null,
-        message: `日线数据不足（当前 ${dailies.length} 根，至少需 ${MIN_BARS} 根），暂无法计算筹码分布`
+        message: `日线数据不足（当前 ${bars.length} 根，至少需 ${MIN_BARS} 根），暂无法计算筹码分布`
       });
     }
 
-    const currentPrice = dailies[dailies.length - 1]!.close;
-    const distribution = calculateChipDistribution(dailies, currentPrice);
+    const currentPrice = bars[bars.length - 1]!.current;
+    const distribution = calculateChipDistribution(bars, currentPrice);
 
     if (!distribution) {
       return NextResponse.json({

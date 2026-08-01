@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import { requireRouteAccess } from '@/lib/route-perm';
 
-// GET /api/stats - 获取当前用户股票池的统计数据（按账号隔离）
+// GET /api/stats - 获取当前用户股票池的统计数据（按账号隔离；类型/市场经字典关联统计）
 export async function GET() {
   try {
     // 路由权限：/pool 为 hidden 时 403
@@ -29,19 +29,16 @@ export async function GET() {
         where: { ...mine, cost: { gt: 0 } }
       }),
       prisma.watchlist.count({
-        where: { ...mine, type: 'etf' }
+        where: { ...mine, stock: { type: 'etf' } }
       }),
       prisma.watchlist.count({
         where: {
           ...mine,
-          OR: [
-            { market: 'hk' },
-            { market: 'us' }
-          ]
+          stock: { market: { in: ['HK', 'US'] } }
         }
       })
     ]);
-    
+
     return NextResponse.json({
       success: true,
       data: {
@@ -51,7 +48,7 @@ export async function GET() {
         hkUs
       }
     });
-    
+
   } catch (error) {
     console.error('Stats error:', error);
     return NextResponse.json(

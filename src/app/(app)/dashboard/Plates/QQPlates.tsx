@@ -1,14 +1,17 @@
 "use client"
 
+import { useState } from "react"
 import useSWR from "swr"
 import { TQQPlate } from "../type"
 import http from "@/utils/http"
 import Skeleton from "@/components/Skeleton"
 import NumberFlow from '@number-flow/react'
 import { NumberFlowFormat } from "@/utils/format"
+import PlateStocksModal from "./PlateStocksModal"
 
 /* 腾讯板块排行（board: hy=行业 / gn=题材）。
-   数据读服务端 plate_cache（/api/stocks/plates，定时任务预热），不再直连第三方。 */
+   数据读服务端 plate_cache（/api/stocks/plates，定时任务预热），不再直连第三方。
+   板块卡片可点击 → 打开成分股弹层（plateCode = qq:<code>）。 */
 export default function QQPlates({ board = 'hy' }: { board?: 'hy' | 'gn' }) {
     const { data = { data: { rank_list: [] } } } = useSWR(
         `/api/stocks/plates?kind=qq_${board}`,
@@ -17,6 +20,14 @@ export default function QQPlates({ board = 'hy' }: { board?: 'hy' | 'gn' }) {
             refreshInterval: 10000
         }
     )
+
+    const [plateCode, setPlateCode] = useState<string | null>(null)
+    const [modalOpen, setModalOpen] = useState(false)
+
+    const openPlate = (code: string) => {
+        setPlateCode(`qq:${code}`)
+        setModalOpen(true)
+    }
 
     const getColor = (num: number) => {
         // 涨跌色随设置页「涨跌配色」翻转（--up/--down，默认红涨绿跌）
@@ -29,12 +40,14 @@ export default function QQPlates({ board = 'hy' }: { board?: 'hy' | 'gn' }) {
         <div className="grid grid-cols-3 gap-1 w-full text-white">
             {
                 data.data.rank_list.length === 0 ? [...Array.from(Array(9).keys())].map(i => <Skeleton key={i} className="w-full rounded-sm h-20" />) : data.data.rank_list.map((item: TQQPlate) => (
-                    <div key={item.code} className={`rounded-sm cursor-pointer w-full flex flex-col gap-1 py-4 justify-center items-center ${getColor(parseFloat(item.zdf))}`}>
+                    <div key={item.code} onClick={() => openPlate(item.code)} className={`rounded-sm cursor-pointer w-full flex flex-col gap-1 py-4 justify-center items-center ${getColor(parseFloat(item.zdf))}`}>
                         <span className="text-xs">{item.name}</span>
                         <NumberFlow value={parseFloat(item.zdf) / 100} format={NumberFlowFormat.rate} />
                     </div>
                 ))
             }
+
+            <PlateStocksModal plateCode={plateCode} open={modalOpen} onOpenChange={setModalOpen} />
         </div>
     )
 }

@@ -1,14 +1,31 @@
 import prisma from '@/lib/prisma';
+import { parseFullCode } from '@/lib/stock-code';
 
 export type TNewsFlashInput = {
   source: string; // wallstcn / xuangubao
   externalId: string;
   title?: string | null;
   content: string;
-  codes?: string | null; // 匹配到的股票代码，逗号分隔；无匹配存 NULL
-  keywords?: string | null; // 命中的股票名/代码关键词，逗号分隔
   publishedAt: Date;
 };
+
+// 快讯关联的股票（stockCode 为 fullCode；keyword 为命中词留痕）
+export type TNewsStockInput = {
+  stockCode: string;
+  keyword?: string | null;
+};
+
+// 快讯行 + 关联股票（返回前端时 codes 聚合成逗号分隔的 6 位裸代码，保持旧契约）
+const withCodes = <T extends { newsStocks: { stockCode: string }[] }>(row: T) => {
+  const { newsStocks, ...rest } = row;
+  const codes = newsStocks
+    .map(ns => parseFullCode(ns.stockCode).code)
+    .filter(Boolean)
+    .join(',');
+  return { ...rest, codes: codes || null, stockCodes: newsStocks.map(ns => ns.stockCode) };
+};
+
+const includeStocks = { newsStocks: { select: { stockCode: true } } } as const;
 
 // 批量写入快讯（按 source+externalId 唯一约束去重），返回实际插入条数
 export const createNewsFlashes = async (items: TNewsFlashInput[]): Promise<number> => {
@@ -19,12 +36,37 @@ export const createNewsFlashes = async (items: TNewsFlashInput[]): Promise<numbe
       externalId: item.externalId,
       title: item.title ?? null,
       content: item.content,
-      codes: item.codes ?? null,
-      keywords: item.keywords ?? null,
       publishedAt: item.publishedAt
     })),
     skipDuplicates: true
   });
+  return result.count;
+};
+
+// 批量写入快讯-股票关联（sync-news 在落快讯后调用；重复关联靠唯一约束幂等）
+// items 的 key 用于找回 news id：source + externalId
+export const syncNewsStocks = async (
+  items: { source: string; externalId: string; stocks: TNewsStockInput[] }[]
+): Promise<number> => {
+  const withStocks = items.filter(i => i.stocks.length > 0);
+  if (withStocks.length === 0) return 0;
+
+  // 按 source+externalId 找回快讯 id（createMany 不返回 id，且部分行可能已存在）
+  const news = await prisma.newsFlash.findMany({
+    where: {
+      OR: withStocks.map(i => ({ source: i.source, externalId: i.externalId }))
+    },
+    select: { id: true, source: true, externalId: true }
+  });
+  const idMap = new Map(news.map(n => [`${n.source}:${n.externalId}`, n.id]));
+
+  const rows = withStocks.flatMap(i => {
+    const newsId = idMap.get(`${i.source}:${i.externalId}`);
+    if (!newsId) return [];
+    return i.stocks.map(s => ({ newsId, stockCode: s.stockCode, keyword: s.keyword ?? null }));
+  });
+  if (rows.length === 0) return 0;
+  const result = await prisma.newsStock.createMany({ data: rows, skipDuplicates: true });
   return result.count;
 };
 
@@ -35,43 +77,41 @@ export const getNewsFlashList = async (options: {
   onlyMatched?: boolean;
 } = {}) => {
   const { page = 1, pageSize = 30, onlyMatched = false } = options;
-  const where = onlyMatched ? { codes: { not: null } } : {};
+  const where = onlyMatched ? { newsStocks: { some: {} } } : {};
   const [total, list] = await Promise.all([
     prisma.newsFlash.count({ where }),
     prisma.newsFlash.findMany({
       where,
+      include: includeStocks,
       orderBy: { publishedAt: 'desc' },
       skip: (page - 1) * pageSize,
       take: pageSize
     })
   ]);
-  return { list, total };
+  return { list: list.map(withCodes), total };
 };
 
-// 按股票代码查询相关快讯（codes 字段 LIKE 匹配），按发布时间倒序
-export const getNewsByCode = async (code: string, limit: number = 50) => {
-  return prisma.newsFlash.findMany({
-    where: { codes: { contains: code } },
+// 按股票查询相关快讯（fullCode 精确关联），按发布时间倒序
+export const getNewsByCode = async (stockCode: string, limit: number = 50) => {
+  const list = await prisma.newsFlash.findMany({
+    where: { newsStocks: { some: { stockCode } } },
+    include: includeStocks,
     orderBy: { publishedAt: 'desc' },
     take: limit
   });
+  return list.map(withCodes);
 };
 
-// 更新某条快讯关联的股票代码（后台补匹配用）
-export const updateNewsFlashCodes = async (id: number, codes: string | null): Promise<void> => {
-  await prisma.newsFlash.update({
-    where: { id },
-    data: { codes }
+// 近 N 天已关联快讯的计数（按 fullCode 聚合），dashboard 总览「资讯关联」用
+export const getNewsCountByStockCodes = async (days: number = 7): Promise<Map<string, number>> => {
+  const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+  const rows = await prisma.newsStock.findMany({
+    where: { news: { publishedAt: { gte: since } } },
+    select: { stockCode: true }
   });
-};
-
-// 获取最近未匹配到股票的快讯（可用于离线补匹配）
-export const getRecentNewsWithoutCodes = async (limit: number = 200) => {
-  return prisma.newsFlash.findMany({
-    where: { codes: null },
-    orderBy: { publishedAt: 'desc' },
-    take: limit
-  });
+  const map = new Map<string, number>();
+  for (const r of rows) map.set(r.stockCode, (map.get(r.stockCode) ?? 0) + 1);
+  return map;
 };
 
 // 资讯管理页统计：总数 / 已关联个股 / 今日新增（北京时间）/ 最新快讯时间
@@ -80,7 +120,7 @@ export const getNewsFlashManageStats = async () => {
   const todayStart = new Date(`${todayStr}T00:00:00+08:00`);
   const [total, matched, todayCount, latest] = await Promise.all([
     prisma.newsFlash.count(),
-    prisma.newsFlash.count({ where: { codes: { not: null } } }),
+    prisma.newsFlash.count({ where: { newsStocks: { some: {} } } }),
     prisma.newsFlash.count({ where: { publishedAt: { gte: todayStart } } }),
     prisma.newsFlash.findFirst({ orderBy: { publishedAt: 'desc' }, select: { publishedAt: true } })
   ]);

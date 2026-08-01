@@ -3,8 +3,8 @@
 // 量比：当日成交量 / 前 20 日均量，≥2 视为放量
 
 import { runWithConcurrency } from '@/lib/eastmoney';
-import { getActiveStockBasics } from '@/model/StockBasic';
-import { getStockDailies } from '@/model/StockDaily';
+import { getActiveStockDicts } from '@/model/StockDict';
+import { getStockTrades, toUtcDate } from '@/model/StockTrade';
 import { upsertStockSignals } from '@/model/StockSignal';
 import prisma from '@/lib/prisma';
 
@@ -16,9 +16,10 @@ export const POSITION_WINDOW = 120; // 位置分位窗口（交易日）
 export const AVG_VOLUME_WINDOW = 20; // 均量窗口
 export const MIN_BARS = 60; // 参与计算的最少日线根数
 
+// current 语义：最新价/收盘价（stock_trade.current；盘后为收盘价）
 export interface VolumeSignalBar {
   date: string | Date;
-  close: number;
+  current: number;
   high: number;
   low: number;
   volume: number;
@@ -31,7 +32,7 @@ export interface VolumeSignal {
     volumeRatio: number;
     position: number;
     changePct: number;
-    close: number;
+    close: number; // key 保持旧契约不变，值=当日 current
   };
 }
 
@@ -59,7 +60,7 @@ export function detectVolumeSignals(dailies: VolumeSignalBar[]): VolumeSignal | 
     if (d.high > maxHigh) maxHigh = d.high;
   }
   if (!(maxHigh > minLow)) return null;
-  const position = (last.close - minLow) / (maxHigh - minLow);
+  const position = (last.current - minLow) / (maxHigh - minLow);
 
   let type: VolumeSignal['type'] | null = null;
   if (position <= POSITION_BOTTOM) type = 'bottom_volume';
@@ -72,39 +73,44 @@ export function detectVolumeSignals(dailies: VolumeSignalBar[]): VolumeSignal | 
       volumeRatio: Math.round(volumeRatio * 100) / 100,
       position: Math.round(position * 1000) / 1000,
       changePct: last.changePct,
-      close: last.close
+      close: last.current
     }
   };
 }
 
-// 对当日有日线的全部在市股票计算放量信号并落库
+// 对当日有交易行的全部在市股票计算放量信号并落库
 export async function runVolumeSignalJob(date: string): Promise<{ checked: number; signaled: number }> {
-  const target = new Date(`${date}T00:00:00.000Z`);
-  // 当日有日线的在市股票
-  const [actives, dailies] = await Promise.all([
-    getActiveStockBasics(),
-    prisma.stockDaily.findMany({ where: { date: target }, select: { code: true } })
+  const target = toUtcDate(date);
+  // 当日有交易行的在市股票
+  const [actives, trades] = await Promise.all([
+    getActiveStockDicts(),
+    prisma.stockTrade.findMany({ where: { date: target }, select: { stockCode: true } })
   ]);
   const activeCodes = new Set(actives.map(a => a.code));
-  const codes = dailies.map(d => d.code).filter(code => activeCodes.has(code));
+  const codes = trades.map(t => t.stockCode).filter(code => activeCodes.has(code));
 
   let signaled = 0;
   await runWithConcurrency(codes, 5, async code => {
     try {
-      // 取近 130 根（计算需要 120 日窗口 + 20 日均量），转成日期升序
-      const rows = await getStockDailies(code, 130);
-      const bars: VolumeSignalBar[] = rows.reverse().map(r => ({
-        date: r.date,
-        close: r.close,
-        high: r.high,
-        low: r.low,
-        volume: r.volume,
-        changePct: r.changePct
-      }));
+      // 取近 130 根（计算需要 120 日窗口 + 20 日均量），转成日期升序；
+      // 快照行字段可空，关键字段缺失的行不参与计算
+      const rows = await getStockTrades(code, 130);
+      const bars: VolumeSignalBar[] = rows.reverse().flatMap(r =>
+        r.current != null && r.high != null && r.low != null && r.volume != null
+          ? [{
+              date: r.date,
+              current: r.current,
+              high: r.high,
+              low: r.low,
+              volume: r.volume,
+              changePct: r.changePct ?? 0
+            }]
+          : []
+      );
       const signal = detectVolumeSignals(bars);
       if (!signal) return;
       await upsertStockSignals([{
-        code,
+        stockCode: code,
         date,
         type: signal.type,
         detail: JSON.stringify(signal.detail)

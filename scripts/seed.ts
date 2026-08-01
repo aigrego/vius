@@ -43,25 +43,25 @@ async function main() {
       })`,
     );
 
-    // 行情总览页的指数清单（与 orioles-service 的 Stock 表一致）
+    // 行情总览页的指数清单（stock_dict，code 为 fullCode，type='index'）
     const indices = [
-      { code: '000001', source: 'SS' }, // 上证指数
-      { code: '399001', source: 'SZ' }, // 深证成指
-      { code: '399006', source: 'SZ' }, // 创业板指
-      { code: '000688', source: 'SS' }, // 科创50
-      { code: '399330', source: 'SZ' }, // 深证100
-      { code: '000300', source: 'SS' }, // 沪深300
-      { code: '000905', source: 'SS' }, // 中证500
-      { code: '000852', source: 'SS' }, // 中证1000
+      { code: 'SH000001', name: '上证指数', market: 'SH' },
+      { code: 'SZ399001', name: '深证成指', market: 'SZ' },
+      { code: 'SZ399006', name: '创业板指', market: 'SZ' },
+      { code: 'SH000688', name: '科创50', market: 'SH' },
+      { code: 'SZ399330', name: '深证100', market: 'SZ' },
+      { code: 'SH000300', name: '沪深300', market: 'SH' },
+      { code: 'SH000905', name: '中证500', market: 'SH' },
+      { code: 'SH000852', name: '中证1000', market: 'SH' },
     ] as const;
     for (const idx of indices) {
-      await prisma.stock.upsert({
+      await prisma.stockDict.upsert({
         where: { code: idx.code },
-        update: {},
-        create: { code: idx.code, source: idx.source, type: 'ZS' },
+        update: { name: idx.name },
+        create: { code: idx.code, name: idx.name, market: idx.market, type: 'index' },
       });
     }
-    console.log(`stock: ${indices.length} indices upserted`);
+    console.log(`stock_dict: ${indices.length} indices upserted`);
 
     // 内置角色（users.role 存角色 key；admin 恒全权限，member 默认权限见下）
     const adminRole = await prisma.role.upsert({

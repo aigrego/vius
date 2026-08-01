@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { Position, Watchlist } from '@prisma/client';
+import type { Position, StockDict, Watchlist } from '@prisma/client';
 import { requireUser, UnauthorizedError } from '@/lib/session';
-import { getStocks } from '@/model/Stock';
-import { fetchRealtimeQuotes, type RealtimeQuote } from '@/lib/realtime';
+import { getIndexDicts } from '@/model/StockDict';
+import { getTradesByDate } from '@/model/StockTrade';
+import { getNewsCountByStockCodes } from '@/model/NewsFlash';
+import { fetchRealtimeQuotes } from '@/lib/realtime';
+import { parseFullCode, toExternalCode } from '@/lib/stock-code';
 import prisma from '@/lib/prisma';
 
 // 声明为动态路由：行情数据，禁止缓存
@@ -12,6 +15,8 @@ export const dynamic = 'force-dynamic';
    - 无参：只读 overview_cache 立即返回（页面首屏用），不触发任何外部行情请求；
    - ?refresh=1：重算三排数据并 upsert 缓存后返回新鲜数据。
    indices 为全局共享缓存（userId='*'），positions/watchlist 按用户隔离。
+   价格链路：优先读 stock_trade 当日行（sync-snapshot 定时任务盘中每分钟/5 分钟刷新），
+   缺当日行的代码兜底三源实时行情（fetchRealtimeQuotes）。
    指数行情与用户股票行情分别 try/catch：任一方失败时该排回退旧缓存，不拖垮整个响应。 */
 
 type Kind = 'indices' | 'positions' | 'watchlist';
@@ -23,6 +28,26 @@ interface OverviewData {
   positions: unknown[] | null;
   watchlist: unknown[] | null;
   updatedAt: Partial<Record<Kind, string>>;
+}
+
+type PositionWithStock = Position & { stock: StockDict };
+type WatchlistWithStock = Watchlist & { stock: StockDict };
+
+// 统一行情视图：db（stock_trade 当日行）或实时三源兜底，归一为 current/prevClose/changePct
+interface MergedQuote {
+  name: string;
+  current: number;
+  prevClose: number;
+  changePct: number;
+  source: string; // 'db' 或实时源名（sina/tencent/eastmoney）
+}
+
+// 行情合并的入参：fullCode + 兜底实时行情用的裸码/小写市场提示 + 字典名兜底
+interface QuoteItem {
+  stockCode: string;
+  bareCode: string;
+  marketHint: string;
+  name: string;
 }
 
 const round = (v: number, p = 100) => Math.round(v * p) / p;
@@ -61,92 +86,136 @@ function upsertCache(userId: string, kind: Kind, payload: unknown) {
   });
 }
 
-// 指数排：stock 表清单 + 三源降级行情（同 /api/stocks/real 无参分支的取数方式）
+// 合并行情：先读 stock_trade 当日行，缺行（或当日无价）的代码兜底三源实时行情。
+// 兜底失败不抛错——已有 db 数据照常返回，保证总览可用性
+async function fetchMergedQuotes(items: QuoteItem[]): Promise<Map<string, MergedQuote>> {
+  const result = new Map<string, MergedQuote>();
+  if (items.length === 0) return result;
+
+  const trades = await getTradesByDate(items.map((i) => i.stockCode));
+  const missing: QuoteItem[] = [];
+  for (const item of items) {
+    const row = trades.get(item.stockCode);
+    if (row && row.current != null) {
+      const prevClose = row.prevClose ?? 0;
+      result.set(item.stockCode, {
+        name: item.name,
+        current: row.current,
+        prevClose,
+        changePct:
+          row.changePct ?? (prevClose > 0 ? round(((row.current - prevClose) / prevClose) * 100) : 0),
+        source: 'db',
+      });
+    } else {
+      missing.push(item);
+    }
+  }
+
+  if (missing.length > 0) {
+    try {
+      const quotes = await fetchRealtimeQuotes(
+        missing.map((m) => m.bareCode),
+        missing.map((m) => m.marketHint),
+      );
+      // key 统一大写，兼容美股代码大小写差异
+      const byCode = new Map(quotes.map((q) => [q.code.toUpperCase(), q]));
+      for (const item of missing) {
+        const q = byCode.get(item.bareCode.toUpperCase());
+        if (!q) continue;
+        result.set(item.stockCode, {
+          name: q.name || item.name,
+          current: q.current,
+          prevClose: q.close,
+          changePct: q.changePct,
+          source: q.source,
+        });
+      }
+    } catch (e) {
+      console.warn('[stocks/overview] 实时行情兜底失败:', e);
+    }
+  }
+  return result;
+}
+
+const toQuoteItem = (stockCode: string, name: string, market: string): QuoteItem => ({
+  stockCode,
+  bareCode: parseFullCode(stockCode).code,
+  marketHint: market.toLowerCase(),
+  name,
+});
+
+// 指数排：stock_dict 指数清单 + 库内快照/三源降级行情（同 /api/stocks/real 无参分支的取数方式）
 async function buildIndices(): Promise<unknown[]> {
-  const stocks = await getStocks();
-  const quotes = await fetchRealtimeQuotes(
-    stocks.map((s) => s.code),
-    stocks.map((s) => (s.source === 'SS' ? 'sh' : 'sz')),
-  );
-  const byCode = new Map(quotes.map((q) => [q.code, q]));
+  const indices = await getIndexDicts();
+  const items = indices.map((d) => toQuoteItem(d.code, d.name, d.market));
+  const quotes = await fetchMergedQuotes(items);
   const result = [];
-  for (const s of stocks) {
-    const q = byCode.get(s.code);
+  for (const item of items) {
+    const q = quotes.get(item.stockCode);
     if (!q) continue;
     result.push({
-      code: `${s.code}.${s.source}`, // 全代码，如 000001.SS
+      code: toExternalCode(item.stockCode), // 外部后缀格式，如 000001.SS
       name: q.name,
       last_px: q.current,
-      px_change: round(q.current - q.close, 1000),
-      px_change_rate: q.close > 0 ? round(((q.current - q.close) / q.close) * 100) : 0,
+      px_change: round(q.current - q.prevClose, 1000),
+      px_change_rate: q.prevClose > 0 ? round(((q.current - q.prevClose) / q.prevClose) * 100) : 0,
     });
   }
   return result;
 }
 
-// 持仓 + 股票池的 code 合并去重后一次批量拉行情（marketHints 用各记录的 market 字段）
-async function fetchUserQuotes(positions: Position[], watchlist: Watchlist[]): Promise<Map<string, RealtimeQuote>> {
-  const marketByCode = new Map<string, string>();
-  for (const p of positions) marketByCode.set(p.code, p.market);
-  for (const w of watchlist) if (!marketByCode.has(w.code)) marketByCode.set(w.code, w.market);
-  if (marketByCode.size === 0) return new Map();
-  const codes = [...marketByCode.keys()];
-  const quotes = await fetchRealtimeQuotes(codes, codes.map((c) => marketByCode.get(c)!));
-  // key 统一大写，兼容美股代码大小写差异
-  return new Map(quotes.map((q) => [q.code.toUpperCase(), q]));
-}
-
-// 近 7 天快讯一次查出，内存里按 code 统计条数（持仓/股票池两排共用，避免逐 code 查询）
-async function buildNewsCountMap(): Promise<Map<string, number>> {
-  const newsCountByCode = new Map<string, number>();
-  const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-  const newsRows = await prisma.newsFlash.findMany({
-    where: { publishedAt: { gte: since }, codes: { not: null } },
-    select: { codes: true },
-  });
-  for (const row of newsRows) {
-    for (const raw of (row.codes ?? '').split(',')) {
-      const code = raw.trim().toUpperCase();
-      if (code) newsCountByCode.set(code, (newsCountByCode.get(code) ?? 0) + 1);
-    }
-  }
-  return newsCountByCode;
-}
-
 // 持仓排：同 code 多条持仓合并，数量累加、成本按 (price×qty) 加权平均
-function buildPositions(positions: Position[], quoteByCode: Map<string, RealtimeQuote>, newsCountByCode: Map<string, number>) {
-  const groups = new Map<string, { code: string; name: string; market: string; totalQty: number; costSum: number }>();
+function buildPositions(
+  positions: PositionWithStock[],
+  quoteByCode: Map<string, MergedQuote>,
+  newsCountByCode: Map<string, number>,
+) {
+  const groups = new Map<
+    string,
+    { stockCode: string; name: string; market: string; totalQty: number; costSum: number }
+  >();
   for (const p of positions) {
-    const g = groups.get(p.code) ?? { code: p.code, name: p.name, market: p.market, totalQty: 0, costSum: 0 };
+    const g =
+      groups.get(p.stockCode) ?? {
+        stockCode: p.stockCode,
+        name: p.stock.name,
+        market: p.stock.market.toLowerCase(),
+        totalQty: 0,
+        costSum: 0,
+      };
     g.totalQty += p.quantity;
     g.costSum += Number(p.price) * p.quantity;
-    groups.set(p.code, g);
+    groups.set(p.stockCode, g);
   }
   return [...groups.values()].map((g) => {
-    const q = quoteByCode.get(g.code.toUpperCase());
+    const q = quoteByCode.get(g.stockCode);
     const current = q?.current ?? 0;
     const avgCost = g.totalQty > 0 ? g.costSum / g.totalQty : 0;
     return {
-      code: g.code,
+      code: parseFullCode(g.stockCode).code, // 6 位裸码，保持旧契约
       name: q?.name || g.name,
       market: g.market,
       totalQty: g.totalQty,
       avgCost: round(avgCost, 10000),
       current,
-      change: q ? round(q.current - q.close, 1000) : 0,
+      change: q ? round(q.current - q.prevClose, 1000) : 0,
       changePct: q?.changePct ?? 0,
       // 无行情时 pnl 给 null，前端显示 '-'
       pnl: q ? round((current - avgCost) * g.totalQty) : null,
-      newsCount: newsCountByCode.get(g.code.toUpperCase()) ?? 0,
+      newsCount: newsCountByCode.get(g.stockCode) ?? 0,
     };
   });
 }
 
 // 股票池排：关注后涨跌幅（markPrice 为 null 时懒回填为当前价）+ 近 7 天关联资讯数
-async function buildWatchlist(watchlist: Watchlist[], quoteByCode: Map<string, RealtimeQuote>, newsCountByCode: Map<string, number>) {
+async function buildWatchlist(
+  watchlist: WatchlistWithStock[],
+  quoteByCode: Map<string, MergedQuote>,
+  newsCountByCode: Map<string, number>,
+) {
   const backfills: Promise<unknown>[] = [];
   const result = watchlist.map((w) => {
-    const q = quoteByCode.get(w.code.toUpperCase());
+    const q = quoteByCode.get(w.stockCode);
     const current = q?.current ?? 0;
     let sincePct = 0;
     let sinceChange = 0;
@@ -159,19 +228,19 @@ async function buildWatchlist(watchlist: Watchlist[], quoteByCode: Map<string, R
       backfills.push(
         prisma.watchlist
           .update({ where: { id: w.id }, data: { markPrice: current } })
-          .catch((e) => console.warn(`[stocks/overview] markPrice 回填失败 ${w.code}:`, e)),
+          .catch((e) => console.warn(`[stocks/overview] markPrice 回填失败 ${w.stockCode}:`, e)),
       );
     }
     return {
-      code: w.code,
-      name: q?.name || w.name,
-      market: w.market,
+      code: parseFullCode(w.stockCode).code, // 6 位裸码，保持旧契约
+      name: q?.name || w.stock.name,
+      market: w.stock.market.toLowerCase(),
       current,
-      change: q ? round(q.current - q.close, 1000) : 0,
+      change: q ? round(q.current - q.prevClose, 1000) : 0,
       changePct: q?.changePct ?? 0,
       sincePct,
       sinceChange, // 关注后涨跌额
-      newsCount: newsCountByCode.get(w.code.toUpperCase()) ?? 0,
+      newsCount: newsCountByCode.get(w.stockCode) ?? 0,
     };
   });
   await Promise.all(backfills);
@@ -181,8 +250,12 @@ async function buildWatchlist(watchlist: Watchlist[], quoteByCode: Map<string, R
 // ?refresh=1：重算三排并 upsert 缓存；失败的排回退旧缓存并在 message 中说明
 async function refresh(uid: string): Promise<{ data: OverviewData; notes: string[] }> {
   const [positions, watchlistRows] = await Promise.all([
-    prisma.position.findMany({ where: { userId: uid, status: 'holding' } }),
-    prisma.watchlist.findMany({ where: { userId: uid }, orderBy: { createdAt: 'desc' } }),
+    prisma.position.findMany({ where: { userId: uid, status: 'holding' }, include: { stock: true } }),
+    prisma.watchlist.findMany({
+      where: { userId: uid },
+      orderBy: { createdAt: 'desc' },
+      include: { stock: true },
+    }),
   ]);
 
   const data: OverviewData = { indices: null, positions: null, watchlist: null, updatedAt: {} };
@@ -200,11 +273,18 @@ async function refresh(uid: string): Promise<{ data: OverviewData; notes: string
     notes.push('指数行情获取失败，已回退缓存数据');
   }
 
-  // 持仓 + 股票池（合并为一次行情请求；资讯统计两排共用一次查询）
+  // 持仓 + 股票池（合并为一次行情合并；资讯统计两排共用一次查询）
   try {
-    const quoteByCode = await fetchUserQuotes(positions, watchlistRows);
+    const items = new Map<string, QuoteItem>();
+    for (const p of positions) {
+      if (!items.has(p.stockCode)) items.set(p.stockCode, toQuoteItem(p.stockCode, p.stock.name, p.stock.market));
+    }
+    for (const w of watchlistRows) {
+      if (!items.has(w.stockCode)) items.set(w.stockCode, toQuoteItem(w.stockCode, w.stock.name, w.stock.market));
+    }
+    const quoteByCode = await fetchMergedQuotes([...items.values()]);
     const newsCountByCode =
-      positions.length > 0 || watchlistRows.length > 0 ? await buildNewsCountMap() : new Map<string, number>();
+      positions.length > 0 || watchlistRows.length > 0 ? await getNewsCountByStockCodes(7) : new Map<string, number>();
     data.positions = buildPositions(positions, quoteByCode, newsCountByCode);
     data.watchlist = await buildWatchlist(watchlistRows, quoteByCode, newsCountByCode);
     data.updatedAt.positions = refreshedAt;

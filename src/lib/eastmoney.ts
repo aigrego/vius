@@ -19,6 +19,7 @@ export interface DailyBar {
   amount: number;
   changePct: number;
   turnover: number | null;
+  prevClose?: number | null; // 昨收（快照接口 f18；历史K线由调用方按前一根 close 推导）
 }
 
 export interface StockListItem {
@@ -158,7 +159,8 @@ export async function fetchDailySnapshot(): Promise<DailyBar[]> {
       volume: isValidNumber(item.f5) ? item.f5 : 0,
       amount: isValidNumber(item.f6) ? item.f6 : 0,
       changePct: isValidNumber(item.f3) ? item.f3 : 0,
-      turnover: isValidNumber(item.f8) ? item.f8 : null
+      turnover: isValidNumber(item.f8) ? item.f8 : null,
+      prevClose: isValidNumber(item.f18) ? item.f18 : null
     });
   }
   return bars;

@@ -1,9 +1,10 @@
 // 资讯快讯抓取 + 个股关联任务
 // 数据源由 news_source 表驱动（key 标识解析器），scheduler 的 sync-news 任务每 15 秒轮询启用源；
-// 抓取的同时提取股票关键词（代码字面 > 名称匹配）判定与个股的相关度，连同 codes 一起落库
+// 抓取的同时提取股票关键词（代码字面 > 名称匹配）判定与个股的相关度，
+// 快讯落 news_flash、关联落 news_stock（stockCode 为 fullCode）
 
-import { getStockBasicMap } from '@/model/StockBasic';
-import { createNewsFlashes, TNewsFlashInput } from '@/model/NewsFlash';
+import { getStockDictMap } from '@/model/StockDict';
+import { createNewsFlashes, syncNewsStocks, TNewsFlashInput } from '@/model/NewsFlash';
 import { listEnabledNewsSources, createNewsSource, markNewsSourceSync } from '@/model/NewsSource';
 
 const NEWS_UA =
@@ -105,31 +106,31 @@ const FETCHERS: Record<string, (url: string, params?: string | null) => Promise<
 const cleanStockName = (name: string): string =>
   name.replace(/^\*?ST/i, '').trim();
 
-// 文本匹配股票：①6 位代码字面命中（相关度最高）②清洗后名称包含匹配
+// 文本匹配股票：①6 位代码字面命中（相关度最高，须是某 fullCode 的后缀）②清洗后名称包含匹配
 // 跳过：清洗后名称长度 <2（单字误配率高）、退市整理股（名称含「退」，如「文化退」，会误配宏观新闻）
-// 返回 {code, keyword} 列表（keyword 为命中的代码或名称，留痕相关度判定依据）
+// 返回 {stockCode, keyword} 列表（stockCode 为 fullCode；keyword 为命中的代码或名称，留痕相关度判定依据）
 export function matchStocks(
   text: string,
   nameMap: Map<string, string>,
-  codeSet: Set<string>
-): { code: string; keyword: string }[] {
+  bareCodeIndex: Map<string, string>
+): { stockCode: string; keyword: string }[] {
   if (!text) return [];
-  const matched = new Map<string, string>(); // code → keyword
-  // 代码字面匹配
+  const matched = new Map<string, string>(); // fullCode → keyword
+  // 代码字面匹配（6 位裸代码 → fullCode）
   for (const m of text.matchAll(/\b\d{6}\b/g)) {
-    const code = m[0];
-    if (codeSet.has(code) && !matched.has(code)) matched.set(code, code);
+    const fullCode = bareCodeIndex.get(m[0]);
+    if (fullCode && !matched.has(fullCode)) matched.set(fullCode, m[0]);
   }
   // 名称匹配
-  for (const [name, code] of nameMap) {
-    if (matched.has(code) || name.includes('退')) continue;
+  for (const [name, fullCode] of nameMap) {
+    if (matched.has(fullCode) || name.includes('退')) continue;
     const cleaned = cleanStockName(name);
     if (cleaned.length < 2) continue;
     if (text.includes(cleaned)) {
-      matched.set(code, cleaned);
+      matched.set(fullCode, cleaned);
     }
   }
-  return [...matched.entries()].map(([code, keyword]) => ({ code, keyword }));
+  return [...matched.entries()].map(([stockCode, keyword]) => ({ stockCode, keyword }));
 }
 
 // 首次运行时库里没有任何数据源，自动补默认的见闻/选股宝两个源
@@ -168,13 +169,13 @@ export const syncNews = async (): Promise<{ fetched: number; inserted: number }>
       sources = await listEnabledNewsSources();
     }
 
-    // code → {name, market} 反转为 name → code；codeSet 供代码字面匹配校验
-    const basicMap = await getStockBasicMap();
+    // fullCode → {name, market} 反转为 name → fullCode；bareCodeIndex 供代码字面匹配（6 位裸代码 → fullCode）
+    const dictMap = await getStockDictMap();
     const nameMap = new Map<string, string>();
-    const codeSet = new Set<string>();
-    for (const [code, basic] of basicMap) {
-      nameMap.set(basic.name, code);
-      codeSet.add(code);
+    const bareCodeIndex = new Map<string, string>();
+    for (const [fullCode, dict] of dictMap) {
+      nameMap.set(dict.name, fullCode);
+      bareCodeIndex.set(fullCode.slice(2), fullCode);
     }
 
     let fetched = 0;
@@ -192,16 +193,20 @@ export const syncNews = async (): Promise<{ fetched: number; inserted: number }>
         const raw = await fetcher(url, params);
         fetched += raw.length;
 
-        const items: TNewsFlashInput[] = raw.map(item => {
+        // 每条快讯：正文匹配关联股票
+        const withMatches = raw.map(item => {
           const text = `${item.title ?? ''} ${item.content}`;
-          const matches = matchStocks(text, nameMap, codeSet);
-          return {
-            ...item,
-            codes: matches.length > 0 ? matches.map(m => m.code).join(',') : null,
-            keywords: matches.length > 0 ? matches.map(m => m.keyword).join(',') : null
-          };
+          const stocks = matchStocks(text, nameMap, bareCodeIndex);
+          return { item, stocks };
         });
+        const items: TNewsFlashInput[] = withMatches.map(({ item }) => item);
         const count = await createNewsFlashes(items);
+        // 快讯-股票关联（按 source+externalId 找回 news id，幂等）
+        await syncNewsStocks(withMatches.map(({ item, stocks }) => ({
+          source: item.source,
+          externalId: item.externalId,
+          stocks
+        })));
         inserted += count;
         await markNewsSourceSync(source.id, 'success', count);
       } catch (error) {

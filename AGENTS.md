@@ -6,8 +6,8 @@
 
 `vius`（观微）是一个 A 股行情同步、多维分析与持仓监控工具，自 `orioles-service` 的 stock/stock-pool 功能抽离而来。功能：
 
-- **行情总览**（`/dashboard`）：三排卡片（指数 / 持仓股汇总 / 股票池，**持仓/股票池排有数据才显示**）+ 三列区块（左=A股涨幅排行 `AshareRank`、中=合并快讯流 `NewsFeed`、右=行业/题材/板块涨跌幅榜）。三排卡片走 `/api/stocks/overview`；**快讯流与涨幅排行均查库**（`/api/ashare/news`、`/api/ashare/rank`），不再前端直连第三方；**板块卡片走 `/api/stocks/plates?kind=` 读 `plate_cache`**（sync-plates 定时任务交易时段每分钟预热，冷启动回源兜底）
-- **股票池**（`/pool`）：自选关注股管理、实时行情、阈值告警（飞书 webhook 推送）、审计日志；**按账号隔离**，每人一个独立池子（`watchlist.user_id`）；**新建只需填股票代码**，名称/市场/类型由服务端自动解析（`src/lib/stock-resolver.ts`：stock_basic 优先，实时行情三源兜底）
+- **行情总览**（`/dashboard`）：三排卡片（指数 / 持仓股汇总 / 股票池，**持仓/股票池排有数据才显示**）+ 三列区块（左=A股涨幅排行 `AshareRank`、中=合并快讯流 `NewsFeed`、右=行业/题材/板块涨跌幅榜）。三排卡片走 `/api/stocks/overview`；**快讯流与涨幅排行均查库**（`/api/ashare/news`、`/api/ashare/rank`），不再前端直连第三方；**板块卡片走 `/api/stocks/plates?kind=` 读 `plate_cache`**（sync-plates 定时任务交易时段每分钟预热，冷启动回源兜底）；**板块行点击开成分股弹层** `PlateStocksModal`（`/api/stocks/plates/[code]/stocks` 读 `plate`+`plate_stock` 关联 `stock_dict`/`stock_trade`）
+- **股票池**（`/pool`）：自选关注股管理、实时行情、阈值告警（飞书 webhook 推送）、审计日志；**按账号隔离**，每人一个独立池子（`watchlist.user_id`）；**新建只需填股票代码**，名称/市场/类型由服务端自动解析（`src/lib/stock-resolver.ts`：stock_dict 优先，实时行情三源兜底并懒建字典行）
 - **持仓股**（`/positions`）：买入持仓管理，添加填 股票代码+买入价+买入数量；同一股票允许多条持仓记录（`position` 表，按 `user_id` 隔离，无唯一约束）；页面实时合并行情算浮动盈亏；**支持卖出**（`POST /stock-pool/api/positions/[id]/sell`，全部/部分），列表分「持仓中/已卖出」两 tab，汇总卡含已实现盈亏
 - **A股总览**（`/ashare`）：全市场 4900+ 股票清单/日线统计、手动触发同步、股票检索、快讯流
 - **放量信号**（`/analysis`）：每日收盘后自动计算的底部/顶部放量信号
@@ -34,6 +34,10 @@ npm run build       # 生产构建（含 TS 检查）
 npm start           # 生产服务
 npm run db:migrate  # prisma migrate dev
 npm run db:seed     # 种子管理员 admin（密码取 SEED_ADMIN_PASSWORD，默认 admin123）
+
+# 数据备份/恢复（PostgreSQL，配置按 .env.${NODE_ENV}.local > .env.local > .env.${NODE_ENV} > .env 读取 DATABASE_URL）
+node scripts/export-data.js <seed-name> [--tables=a,b] [--exclude=x] [--schema|--schema-only] [--use-pgdump] [--where=..] [--limit=n]
+node scripts/import-data.js <seed-name>   # 输出在 backups/（已 gitignore），每表一个 .sql + <seed-name>.seed 清单
 ```
 
 ## 目录结构
@@ -62,7 +66,7 @@ src/
 │   ├── api/users/             # 用户管理 API（admin 专属，requireAdmin；invitations/ 为邀请白名单）
 │   ├── api/roles/             # 角色字典 API（admin 专属）
 │   ├── api/permissions/       # 权限矩阵 API（admin 专属）
-│   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates/ 板块缓存（读 plate_cache）+ overview/ 总览三排卡片 + manage/sources 行情数据源管理（admin）
+│   ├── api/stocks/            # 指数清单 + real/ 行情快照代理 + plates/ 板块缓存（读 plate_cache）+ plates/[code]/stocks 板块成分股 + overview/ 总览三排卡片 + manage/sources 行情数据源管理（admin）
 │   ├── api/cron/              # 定时任务管理 API（admin 专属，require-admin.ts 鉴权）
 │   ├── api/news/              # 资讯管理 API（manage/* 为 admin 数据源管理）
 │   ├── api/lhb/               # 龙虎榜 API（列表/seats；manage/* 为 admin 数据源管理）
@@ -81,10 +85,11 @@ src/
 │   ├── prisma.ts                              # 单例（默认导出 + 具名导出共存）
 │   ├── realtime.ts / eastmoney.ts             # 实时行情多源降级（realtime_source 表驱动，只循环启用源）/ 东财采集（多镜像 + 腾讯兜底）
 │   ├── lhb.ts                                 # 东财 datacenter 龙虎榜封装（榜单 RPT_DAILYBILLBOARD_DETAILS + 席位 BUY/SELL）
-│   ├── stock-resolver.ts                      # 代码→名称/市场/类型 自动解析（stock_basic 优先，行情兜底）
+│   ├── stock-resolver.ts                      # 代码→名称/市场/类型 自动解析（stock_dict 优先，行情兜底并懒建字典行）
+│   ├── stock-code.ts                          # fullCode 工具（SH600519 前缀风格 ↔ 裸码/市场 ↔ 600519.SS 外部后缀风格）
 │   ├── technical.ts / alerts.ts / feishu.ts   # 指标计算 / 告警判定 / 飞书推送
 │   ├── scheduler.ts                           # node-cron 调度（JOBS 注册表 + reschedule/trigger/listJobs + cron_run 运行记录）
-│   ├── jobs/                                  # sync-daily / sync-news / sync-lhb / sync-plates / check-alerts
+│   ├── jobs/                                  # sync-daily / sync-news / sync-lhb / sync-plates / sync-snapshot / sync-fundamentals / check-alerts
 │   └── analysis/                              # volume-signals / chip-distribution
 ├── server/oauth.ts            # 三方 OAuth 统一门面（provider 分发 + 回调账号逻辑 + 邀请门控）
 ├── server/lark.ts             # 飞书/Lark OAuth HTTP 细节
@@ -102,8 +107,10 @@ src/
   - `/stock-pool/api/*`：`{success:true, data}` / `{success:false, error}`
 - **鉴权**：API 内 `requireUser()`（抛 `UnauthorizedError` → 各路由按自家信封返回 401）；`POST /api/ashare/sync` 额外支持 `Authorization: Bearer $CRON_SECRET`。proxy（`src/proxy.ts`）只查 cookie 存在性，真正校验在 API 层
 - **RBAC 路由权限**：角色存 `roles` 表（`users.role` = 角色 key；admin/member 内置不可删、key 不可改），各角色对 8 条治理路由（/dashboard /pool /positions /ashare /analysis /lhb /cron /agent）的权限档存 `role_route_permissions` 表，三档语义：`rw` 读写 / `ro` 只读（写操作 403「只读权限，无法执行此操作」）/ `hidden` 不可见（侧边栏隐藏入口 + 接口 403「无权限」）；/profile、/settings 恒定可见不入矩阵。**admin 恒全 rw 不查库**；member 默认 7 条 rw + /cron hidden，自定义角色默认全 ro，未配置的路由走默认档兜底。核心 `src/lib/route-perm.ts`（`GOVERNED_ROUTES` 清单 / `getRouteLevels(roleKey)` 带 10s 进程缓存 / `requireRouteAccess(route, { write? })` 仿 requireAdmin 风格，调用方 `if (x instanceof NextResponse) return x`）；强制点：`/stock-pool/api/*`（/pool /positions，alerts/check 虽 GET 按写校验）、`/api/ashare/*`（/ashare；signals→/analysis；sync 的 session 分支按写校验、Bearer CRON_SECRET 分支跳过）、`/api/lhb`（GET）；前端 Sidebar 按 `levels` 过滤入口、AuthGate 对 hidden 路由 `replace('/dashboard')`。管理面：设置页「用户管理 / 权限矩阵 / 角色字典」tab + `/api/users` `/api/roles` `/api/permissions`（均 requireAdmin），当前用户权限 `GET /api/auth/permissions`；权限矩阵保存后调 `clearRouteLevelCache()` 即时生效。注意：角色变更只影响新请求按 `users.role` 查库的部分，已签发 cookie 里的 role 不变（重新登录后刷新）
-- **股票池按账号隔离**：`watchlist.user_id`（`@@unique([userId, code])`，级联删除）；`/stock-pool/api/*` 全部按 `session.uid` 过滤；告警历史 `alert_history.user_id` 可空（存量为 null）。定时告警走 `runAlertCheckAll()` 按用户分组跑、飞书推送标题带归属用户名；手动「检查预警」只查当前用户
-- **持仓股**：`position` 表按 `user_id` 隔离，**同一 (userId, code) 允许多条**（买入价/数量不同）；新增走 `POST /stock-pool/api/positions`（code+price+quantity，名称/市场自动解析）；持仓实时行情走 `/stock-pool/api/positions/realtime`（与股票池 realtime 独立的 3s TTL 缓存，只拉 `status='holding'` 的代码）。**卖出**：`status`（holding/sold）+ `sell_price` + `sold_at` 三列，`POST /stock-pool/api/positions/[id]/sell`（body `{price, quantity?}`，quantity 缺省=全卖）；部分卖出拆行——原记录减量 + 新建同买入价的 sold 记录，已实现盈亏 = `(sellPrice−price)×quantity` 现算不冗余存储；审计 `audit_log` action `SELL`；dashboard 总览持仓排也只聚合 holding 行
+- **股票字典主线（2026-08 重构）**：`stock_dict` 是全系统主线（A股/港股/指数/ETF），主键 `code` 为 **fullCode**（市场前缀大写 + 数字代码：`SH600519`/`SZ000001`/`BJ430047`/`HK00700`；纯数字代码在指数与个股间会冲突，必须带前缀），另存 market/name/formerNames/type(stock|index|etf)/市值/主营业务(Json)/盈利构成(Json)/财务指标(Json)/listedDate/isActive/fundamentalsAt。转换工具集中 `src/lib/stock-code.ts`（`toFullCode`/`parseFullCode`/`toExternalCode`/`inferAShareMarket`）；**外部接口契约不变**——`/api/stocks/real` 的 `prod_code=000001.SS`（wallstcn 后缀风格，SH→SS）与选股宝 iframe 在 API 边缘转换，前端无感知。**所有每股每日数据都关联字典**：`stock_trade`（交易/价格，`@@unique([stockCode,date])`，字段 open/current(现价,收盘后=收盘价)/prevOpen/prevClose/high/low/changePct/amplitude/volume(手)/amount/turnover）、`news_stock`（资讯多对多关联，替代原 `news_flash.codes` 逗号串；API 返回时聚合回 codes 逗号串保持前端契约）、`plate_stock`（板块成分股，`plate` 表 code=`xgb:<plate_id>`/`qq:<腾讯code>`）、`stock_signal`、`watchlist`、`position`。API 出参保持旧契约：`code` 给 6 位裸码、`market` 给小写（watchlist 的 type 输出 stock→individual 映射）
+- **价格链路**：`stock_trade` 当日行是唯一价格来源，三条写入路径——① sync-snapshot 盘中**每 10 秒**刷新关注股（股票池∪持仓∪指数，走 `fetchRealtimeQuotes` 实时多源）；② sync-daily **每日 16:00** 全市场快照覆盖（东财 clist）；③ `/api/stocks/real` **穿透式回源**——A 股代码先读库，库中无当日行/无价才调东财 ulist（主站→push2delay 双镜像）并落 stock_trade + 更新字典市值/PE/PB，**同日二次访问纯读库不再打东财**。**页面价格一律读库**（`/stock-pool/api/(positions/)realtime`、`/api/stocks/overview`、check-alerts 都走 `getTradesByDate`），库中无当日行的代码（盘前、未覆盖市场）兜底直连 `fetchRealtimeQuotes`；读库路径 `source='db'`、volume 已是「手」不再换算，兜底路径保留新浪量 ×100 适配。例外：`/stock-pool/api/stocks/[code]/kline`（新浪 K 线代理）仍直连第三方
+- **股票池按账号隔离**：`watchlist.user_id`（`@@unique([userId, stockCode])`，级联删除；只存 stockCode/cost/markPrice/alertsJson，名称/市场/类型关联 `stock_dict` 获得）；`/stock-pool/api/*` 全部按 `session.uid` 过滤；告警历史 `alert_history.user_id` 可空（存量为 null）、`alert_history.code` 存 fullCode。定时告警走 `runAlertCheckAll()` 按用户分组跑、飞书推送标题带归属用户名；手动「检查预警」只查当前用户
+- **持仓股**：`position` 表按 `user_id` 隔离，**同一 (userId, stockCode) 允许多条**（买入价/数量不同；只存 stockCode/price/quantity/status/sellPrice/soldAt）；新增走 `POST /stock-pool/api/positions`（code+price+quantity，名称/市场自动解析）；持仓实时行情走 `/stock-pool/api/positions/realtime`（读 `stock_trade` 当日快照 + 兜底，与股票池 realtime 独立的 3s TTL 缓存，只拉 `status='holding'` 的代码）。**卖出**：`status`（holding/sold）+ `sell_price` + `sold_at` 三列，`POST /stock-pool/api/positions/[id]/sell`（body `{price, quantity?}`，quantity 缺省=全卖）；部分卖出拆行——原记录减量 + 新建同买入价的 sold 记录，已实现盈亏 = `(sellPrice−price)×quantity` 现算不冗余存储；审计 `audit_log` action `SELL`；dashboard 总览持仓排也只聚合 holding 行
 - **多邮箱**：`user_emails` 表（全局唯一、小写、source=manual/feishu/lark/github）；任一邮箱可登录（login 路由先查 username 再查邮箱）；OAuth 回调把带回的邮箱落表；老用户 username 是邮箱时 GET /api/auth/profile 惰性回填主邮箱
 - **OAuth 邀请门控**（`src/server/oauth.ts` 的 `completeOAuthLogin`，feishu/lark/github 统一）：登录模式按序判定——provider id（`users.lark_union_id` / `users.github_id`）已绑定 → 直接登录（历史授权，不看邀请）；否则**邮箱为硬依赖**（profile 拿不到邮箱 → `/login?error=noemail`，⚠️ 飞书/Lark 无邮箱自动建号的旧行为已取消）；邮箱（小写）命中已有用户的**任一邮箱**（`user_emails` 或 username，多邮箱账号任一邮箱都参与三方登录匹配绑定）→ 免邀请绑定 provider id 并登录；**全新邮箱**才须命中 `invitations` 表 pending 邀请——自动建号（role=member、passwordHash='!oauth'），邀请同事务置 accepted + 回填 userId；无邀请 → `/login?error=invite`
 - **邀请管理**：设置页「用户管理」tab（MailPlus「邀请用户」弹窗 + 邀请记录卡，状态 Badge pending=待接受/accepted=已接受，仅 pending 可删，accepted 留档审计）+ `/api/users/invitations`（GET/POST）与 `/api/users/invitations/[id]`（DELETE），均 requireAdmin；邀请只做邮箱白名单，不发邮件、不预分配角色
@@ -111,29 +118,34 @@ src/
 - **Next 16**：动态路由 `params` 是 Promise，必须 `await ctx.params`
 - **页面路由**（2026-07 改名）：`/dashboard` 行情总览、`/pool` 股票池、`/positions` 持仓股、`/ashare` A股总览、`/analysis` 放量信号；`/stock/[code]` 详情页保留不动；旧路径由 `next.config.ts` 的 redirects 做 307 兼容跳转；`/stock-pool/api/*` 接口路径未动
 - **涨跌配色**：行情涨跌一律用语义类 `text-up`/`text-down`/`bg-up`/`bg-down`/`border-up`/`border-down`（`globals.css` 的 `--up`/`--down` 运行时变量，默认红涨绿跌；`:root[data-up-color='green']` 互换为绿涨红跌）。偏好在设置页「通用-涨跌配色」，存 `localStorage('vius-prefs').upColor`，helper 在 `src/lib/updown.ts`，anti-flash 在 `layout.tsx` 内联脚本；语义红绿（删除/停牌/获利盘等）仍用原 Tailwind 色
-- **行情总览三排卡片**：`GET /api/stocks/overview` 无参只读 `overview_cache` 缓存秒回（indices 全局 `user_id='*'`，positions/watchlist 按用户）；`?refresh=1` 重算+upsert（指数与用户股票各一次批量行情调用）。前端 `dashboard/Overview.tsx`：开页先渲染缓存，再 refresh 更新，之后 10s 轮询。持仓排按 code 汇总（`avgCost=Σ(price×qty)/Σqty`，`pnl=(current−avgCost)×totalQty`）；股票池排「关注后涨跌幅」基于 `watchlist.mark_price`（关注时价格，创建时记录、存量 null 懒回填），「资讯关联」=近 7 天 `news_flash.codes` 匹配条数
+- **行情总览三排卡片**：`GET /api/stocks/overview` 无参只读 `overview_cache` 缓存秒回（indices 全局 `user_id='*'`，positions/watchlist 按用户）；`?refresh=1` 重算+upsert（行情先读 `stock_trade` 当日快照、缺行兜底一次批量实时调用）。前端 `dashboard/Overview.tsx`：开页先渲染缓存，再 refresh 更新，之后 10s 轮询。持仓排按 code 汇总（`avgCost=Σ(price×qty)/Σqty`，`pnl=(current−avgCost)×totalQty`）；股票池排「关注后涨跌幅」基于 `watchlist.mark_price`（关注时价格，创建时记录、存量 null 懒回填），「资讯关联」=近 7 天 `news_stock` 匹配条数
 - **行情数据源管理**：`realtime_source` 表（key=sina/tencent/eastmoney，解析器固定在 `realtime.ts`，只启停/排序不增删）；`fetchRealtimeQuotes` 按 `sort` 升序**只循环启用源**，启用清单带 10s 进程缓存（启停最长 10s 生效）；空表自动补默认三源，**全部停用视为配置失误兜底用全量源**；管理面=设置页「行情管理」tab + `/api/stocks/manage/sources`（requireAdmin）
-- **定时任务注册表**：`scheduler.ts` 的 `JOBS`（daily-close/intraday-alerts/sync-news/sync-lhb/sync-plates）是唯一任务来源；`cron_job` 表存 cron/enabled 覆盖（仅改过的有行），`cron_run` 表存每次运行记录；运行时改 cron 走 `rescheduleJob()`（validate→destroy 旧 task→重排），手动触发走 `triggerJob()`（进程内 Set 互斥防重入）；`executeJob` 带 30 分钟超时看门狗（超时标 failed，finish 用 `status='running'` 守卫防迟到 handler 覆盖），启动时清理僵尸 running 记录（防进程重启后页面永远「运行中」）；cron 页「执行频率」列用 `src/utils/cron-human.ts` 的 `cronToHuman()` 转可读文本（编辑仍用表达式，草稿实时预览含义）
+- **定时任务注册表**：`scheduler.ts` 的 `JOBS`（daily-close/intraday-alerts/sync-news/sync-lhb/sync-plates/sync-snapshot/sync-fundamentals/sync-plate-stocks）是唯一任务来源；`cron_job` 表存 cron/enabled 覆盖（仅改过的有行），`cron_run` 表存每次运行记录；运行时改 cron 走 `rescheduleJob()`（validate→destroy 旧 task→重排），手动触发走 `triggerJob()`（进程内 Set 互斥防重入）；`executeJob` 带 30 分钟超时看门狗（超时标 failed，finish 用 `status='running'` 守卫防迟到 handler 覆盖），启动时清理僵尸 running 记录（防进程重启后页面永远「运行中」）；cron 页「执行频率」列用 `src/utils/cron-human.ts` 的 `cronToHuman()` 转可读文本（编辑仍用表达式，草稿实时预览含义）
 - **注释以中文为主**；路径别名 `@/* → ./src/*`
 - **无测试框架**；`test/*.http` 用 REST Client 手动测
 
 ## 数据链路（每日自动）
 
 `instrumentation.ts` → `scheduler.ts`（Asia/Shanghai 时区）：
-- **15:30 周一~周五**：sync-daily（东财 clist 清单+快照 → 历史回补）→ volume-signals（放量信号落 `stock_signal`）→ check-alerts（自选股告警 → `alert_history` + 飞书 webhook）
+- **16:00 周一~周五**：sync-daily（东财 clist 清单 → stock_dict；当日全市场快照 → stock_trade；缺失股票历史回补）→ volume-signals（放量信号落 `stock_signal`）→ check-alerts（自选股告警 → `alert_history` + 飞书 webhook）
 - **17:30 周一~周五**：sync-lhb（东财 datacenter 龙虎榜个股榜单+席位明细，当日覆盖式落 `lhb_stock`/`lhb_seat`，数据源为 `lhb_source` 中启用项）
+- **20:00 周一~周五**：sync-fundamentals（东财 F10 市值/主营业务/主营构成/财务指标慢速回填 `stock_dict`，按 `fundamentals_at` 升序轮转，并发 2 + 批间 500ms）
+- **9:20 周一~周五**：sync-plate-stocks（板块清单落 `plate`、成分股落 `plate_stock`：xgb 成分取缓存 top_n_stocks 降级，qq 走 getBoardRankList 全量 ≤200，成分股懒建 `stock_dict` 行）
 - **盘中每 5 分钟**：check-alerts
-- **每 15 秒**：sync-news（轮询 `news_source` 启用源抓取快讯，抓取同时提取股票关键词/代码判定个股相关度，`codes`+`keywords` 一起落 `news_flash`；进程内防重入）
+- **每 15 秒**：sync-news（轮询 `news_source` 启用源抓取快讯，抓取同时提取股票关键词/代码判定个股相关度，快讯落 `news_flash`、个股关联落 `news_stock`；进程内防重入）
 - **盘中每分钟**：sync-plates（腾讯行业/题材板块 + 选股宝板块涨/跌幅榜 → `plate_cache`，函数内卡 9:30-15:00；页面 `/api/stocks/plates` 只读库）
+- **盘中每 10 秒**：sync-snapshot（关注股=股票池∪持仓∪指数走实时行情多源写 `stock_trade` 当日行；函数内卡 9:30-15:00；**不做全市场盘中快照**——全市场由 sync-daily 16:00 同步，其他股票由 /api/stocks/real 穿透式回源按需落库）
 
-手动触发：`POST /api/ashare/sync?type=daily|news|signals|lhb|all`（登录 session 或 `Bearer $CRON_SECRET`）；`codes=` 参数可只回补指定股票历史，`type=lhb` 时 `date=` 可指定单日；**`from=&to=`（YYYY-MM-DD，单次 ≤31 天）按区间回补**——`type=lhb` 逐工作日回补（`syncLhbRange`，空榜日跳过写入防误清），`type=daily` 只补区间内有缺漏的活跃股（`backfillDailyRange` + `getCodesMissingInRange`，以区间最大条数近似交易日数）。UI 入口：/ashare「日行情补缺」、设置页「龙虎榜管理-历史回补」。admin 也可在 `/cron` 页面手动触发/改 cron/启停（`POST /api/cron/<id>/trigger`、`PUT /api/cron/<id>`）。
+手动触发：`POST /api/ashare/sync?type=daily|news|signals|lhb|snapshot|fundamentals|plate-stocks|all`（登录 session 或 `Bearer $CRON_SECRET`；后三个新类型不含在 all 内）；`codes=` 参数可只回补指定股票历史，`type=lhb` 时 `date=` 可指定单日；**`from=&to=`（YYYY-MM-DD，单次 ≤31 天）按区间回补**——`type=lhb` 逐工作日回补（`syncLhbRange`，空榜日跳过写入防误清），`type=daily` 只补区间内有缺漏的活跃股（`backfillDailyRange` + `getCodesMissingInRange`，以区间最大条数近似交易日数）。UI 入口：/ashare「日行情补缺」、设置页「龙虎榜管理-历史回补」。admin 也可在 `/cron` 页面手动触发/改 cron/启停（`POST /api/cron/<id>/trigger`、`PUT /api/cron/<id>`）。
 
 ## 数据源注意事项
 
-- 东财（push2/push2his）对高频请求会**临时封 IP**（TCP 重置，约数十分钟解封）：clist 有 push2delay 降级，kline 有编号镜像 + 腾讯 ifzq 兜底（腾讯源无换手率/成交额）
-- 东财 volume 单位为「手」，新浪实时量为「股」（check-alerts 已做 ×100 适配）
+- 东财（push2/push2his）对高频请求会**临时封 IP**（TCP 重置，约数十分钟解封）：clist 有 push2delay 降级，kline 有编号镜像 + 腾讯 ifzq 兜底（腾讯源无换手率/成交额）；`/api/stocks/real` 的 ulist 也是主站→push2delay 双镜像；**不做盘中全市场高频拉取**（全市场每日 16:00 一次），单股按需穿透每日每票最多一次
+- 东财 volume 单位为「手」，新浪实时量为「股」（sync-snapshot 写库前 ÷100；check-alerts 兜底直连路径保留 ×100 适配；stock_trade.volume 恒为手）
 - 东财 clist 单页上限 100 行（pz 设 200 也只返回 100，分页必须按 100）
 - 批量写一律 `createMany(skipDuplicates)`，不要逐条 upsert（高延迟链路下差几个数量级）
+- 东财 F10（sync-fundamentals）：`BusinessAnalysis` 不支持 BJ 股（代码里跳过）；push2 `stock/get` 的 f9/f23 会被静默丢弃，PE/PB 要用 f162/f167（`fltt=2`）；secid 市场段 SH=1、SZ/BJ=0；主站限流时 delay 站稳定（delay 优先、主站兜底）
+- 板块成分股（sync-plate-stocks）：选股宝暂无全量成分接口（探测保留，降级用缓存 `top_n_stocks`）；腾讯走 `getBoardRankList`（需 Referer，≤200 条）
 
 ## 环境变量（.env.example 有逐条注释）
 

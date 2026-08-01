@@ -1,6 +1,7 @@
 import { handleApiError } from '@/utils/api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { getStockSignals } from '@/model/StockSignal';
+import { parseFullCode } from '@/lib/stock-code';
 import prisma from '@/lib/prisma';
 import { requireRouteAccess } from '@/lib/route-perm';
 
@@ -52,7 +53,8 @@ export const GET = async (request: NextRequest) => {
 
     const signals = await getStockSignals({ type, date, limit });
 
-    // detail 字段库中是 JSON 字符串，parse 成对象返回（解析失败保留原字符串）
+    // detail 字段库中是 JSON 字符串，parse 成对象返回（解析失败保留原字符串）；
+    // stockCode（fullCode）转回旧契约：code 为 6 位裸码、market 小写
     const list = signals.map(signal => {
       let detail: unknown = signal.detail;
       if (typeof signal.detail === 'string' && signal.detail) {
@@ -62,7 +64,13 @@ export const GET = async (request: NextRequest) => {
           // 忽略解析失败，原样返回
         }
       }
-      return { ...signal, detail };
+      const { stockCode, market, ...rest } = signal;
+      return {
+        ...rest,
+        code: parseFullCode(stockCode).code,
+        market: market ? market.toLowerCase() : null,
+        detail
+      };
     });
 
     return NextResponse.json({

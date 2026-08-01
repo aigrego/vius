@@ -13,7 +13,9 @@ import { runVolumeSignalJob } from '@/lib/analysis/volume-signals';
 import { runAlertCheckAll } from '@/lib/jobs/check-alerts';
 import { syncNews } from '@/lib/jobs/sync-news';
 import { syncLhb } from '@/lib/jobs/sync-lhb';
-import { syncPlates } from '@/lib/jobs/sync-plates';
+import { syncPlates, syncPlateStocks } from '@/lib/jobs/sync-plates';
+import { syncSnapshot } from '@/lib/jobs/sync-snapshot';
+import { syncFundamentals } from '@/lib/jobs/sync-fundamentals';
 
 /* ---------- 任务定义 ---------- */
 
@@ -131,13 +133,44 @@ async function runSyncPlates(): Promise<void> {
   }
 }
 
+async function runSyncSnapshot(): Promise<void> {
+  try {
+    const result = await syncSnapshot();
+    if (result.watched > 0) {
+      console.log(`[scheduler] syncSnapshot finished: ${JSON.stringify(result)}`);
+    }
+  } catch (error) {
+    console.error('[scheduler] syncSnapshot failed:', error);
+  }
+}
+
+async function runSyncFundamentals(): Promise<void> {
+  try {
+    console.log('[scheduler] syncFundamentals started');
+    const result = await syncFundamentals();
+    console.log(`[scheduler] syncFundamentals finished: ${JSON.stringify(result)}`);
+  } catch (error) {
+    console.error('[scheduler] syncFundamentals failed:', error);
+  }
+}
+
+async function runSyncPlateStocks(): Promise<void> {
+  try {
+    console.log('[scheduler] syncPlateStocks started');
+    const result = await syncPlateStocks();
+    console.log(`[scheduler] syncPlateStocks finished: ${JSON.stringify(result)}`);
+  } catch (error) {
+    console.error('[scheduler] syncPlateStocks failed:', error);
+  }
+}
+
 // 任务注册表：id 即 cron_job / cron_run 表里的外键
 export const JOBS: JobDef[] = [
   {
     id: 'daily-close',
     name: '收盘同步与信号',
-    description: '日线同步 → 放量信号 → 告警检查（15:30 周一~周五）',
-    cron: '30 15 * * 1-5',
+    description: '全市场日线同步 → 放量信号 → 告警检查（16:00 周一~周五）',
+    cron: '0 16 * * 1-5',
     timezone: 'Asia/Shanghai',
     handler: runDailyCloseJobs,
   },
@@ -171,6 +204,30 @@ export const JOBS: JobDef[] = [
     cron: '* 9-15 * * 1-5',
     timezone: 'Asia/Shanghai',
     handler: runSyncPlates,
+  },
+  {
+    id: 'sync-snapshot',
+    name: '盘中快照同步',
+    description: '关注股（股票池∪持仓∪指数）每 10 秒写 stock_trade 当日行（函数内卡 9:30-15:00）；全市场日线由 daily-close 16:00 同步',
+    cron: '*/10 * 9-15 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    handler: runSyncSnapshot,
+  },
+  {
+    id: 'sync-fundamentals',
+    name: '基本面回填',
+    description: '东财 F10 市值/主营/财务指标慢速回填 stock_dict（20:00 周一~周五）',
+    cron: '0 20 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    handler: runSyncFundamentals,
+  },
+  {
+    id: 'sync-plate-stocks',
+    name: '板块成分同步',
+    description: '板块清单落 plate 表 + 成分股落 plate_stock（9:20 周一~周五盘前）',
+    cron: '20 9 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    handler: runSyncPlateStocks,
   },
 ];
 

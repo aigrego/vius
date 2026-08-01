@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStocks } from '@/model/Stock';
+import { getIndexDicts } from '@/model/StockDict';
+import { getTradesByDate, replaceSnapshots } from '@/model/StockTrade';
 import { fetchRealtimeQuotes, type RealtimeQuote } from '@/lib/realtime';
+import { parseFullCode as parseDictCode, toExternalCode, toFullCode } from '@/lib/stock-code';
+import prisma from '@/lib/prisma';
 
 // 声明为动态路由：实时行情，禁止缓存
 export const dynamic = 'force-dynamic';
 
 /* 行情快照（wallstcn api-ddc.market/real 的替代，该域名已 DNS 下线）。
-   - 无参：指数清单读 stock 表，行情走 lib/realtime 三源降级（行情总览页指数卡片）；
-   - ?prod_code=000001.SS,00700.HK&fields=...：任意代码快照，A股/港股走东财 ulist
-     全字段（含换手率/PE/PB/市值，供个股详情页），美股走 lib/realtime。
+   - 无参：指数清单读 stock_dict（type='index'），行情走 lib/realtime 三源降级（行情总览页指数卡片）；
+   - ?prod_code=000001.SS,00700.HK&fields=...：任意代码快照。A股走「穿透式回源」——
+     优先读 stock_trade 当日行（含关注股 10s 快照与已穿透股票），缺失才调东财 ulist 并落库
+     （同日二次访问纯读库，不再打东财）；港股仍走东财 ulist 直取，美股走 lib/realtime。
    响应保持 wallstcn 的 fields + snapshot 形状（snapshot 行按请求 fields 顺序取值），
    前端组件只需换 host。5 秒内存缓存兜底快讯 StocksTag 的高频轮询。 */
 
@@ -43,18 +47,29 @@ function parseFullCode(full: string): { code: string; market: string } {
 const EM_MARKET: Record<string, string> = { sh: '1', sz: '0', bj: '0', hk: '116' };
 
 // 东财 ulist 全字段快照（A股/港股）。f5 成交量单位为「手」，这里 ×100 转成股。
+// 主站限流时 delay 镜像通常还可用（与 eastmoney.ts 的降级策略一致），主站优先、delay 兜底
 async function fetchEastMoneySnaps(items: { code: string; market: string }[]): Promise<Map<string, Snap>> {
   const secids = items.map((i) => `${EM_MARKET[i.market]}.${i.code}`).join(',');
   const fields = 'f12,f14,f2,f3,f5,f6,f8,f9,f15,f16,f17,f18,f20,f21,f23';
-  const resp = await fetch(`https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&fields=${fields}&secids=${secids}`, {
-    signal: AbortSignal.timeout(5000),
-    headers: {
-      Referer: 'https://quote.eastmoney.com',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    },
-  });
-  if (!resp.ok) throw new Error(`eastmoney ${resp.status}`);
-  const json = await resp.json();
+  let json: any = null;
+  let lastError: unknown = null;
+  for (const host of ['push2.eastmoney.com', 'push2delay.eastmoney.com']) {
+    try {
+      const resp = await fetch(`https://${host}/api/qt/ulist.np/get?fltt=2&fields=${fields}&secids=${secids}`, {
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          Referer: 'https://quote.eastmoney.com',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+      if (!resp.ok) throw new Error(`eastmoney ${resp.status}`);
+      json = await resp.json();
+      break;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  if (!json) throw lastError;
   const result = new Map<string, Snap>();
   for (const item of json?.data?.diff ?? []) {
     if (typeof item.f2 !== 'number') continue; // 停牌/无数据
@@ -98,6 +113,30 @@ function fromRealtime(q: RealtimeQuote): Snap {
     marketValue: 0,
     circulationValue: 0,
     source: q.source,
+  };
+}
+
+// stock_trade 当日行 + stock_dict → Snap（穿透式回源的读库路径；volume 手→股与东财路径单位对齐）
+type TradeRow = NonNullable<Awaited<ReturnType<typeof getTradesByDate>> extends Map<string, infer R> ? R : never>;
+type DictInfo = { name: string; marketCap: number | null; floatMarketCap: number | null; financials: unknown };
+
+function fromDb(row: TradeRow, dict?: DictInfo): Snap {
+  const fin = (dict?.financials ?? null) as { pe?: number; pb?: number } | null;
+  return {
+    name: dict?.name ?? '',
+    last: row.current ?? 0,
+    open: row.open ?? 0,
+    preclose: row.prevClose ?? 0,
+    high: row.high ?? 0,
+    low: row.low ?? 0,
+    volume: (row.volume ?? 0) * 100,
+    amount: row.amount ?? 0,
+    turnoverRatio: row.turnover ?? 0,
+    pe: fin?.pe ?? 0,
+    pb: fin?.pb ?? 0,
+    marketValue: dict?.marketCap ?? 0,
+    circulationValue: dict?.floatMarketCap ?? 0,
+    source: 'db',
   };
 }
 
@@ -189,15 +228,88 @@ export const GET = async (req: NextRequest) => {
       const parsed = fullCodes.map(parseFullCode);
       const snaps = new Map<string, Snap>();
 
-      const emItems = parsed.filter((p) => p.market !== 'us');
-      if (emItems.length > 0) {
+      // A股：穿透式回源——优先读 stock_trade 当日行，缺失才调东财并落库（同日二次访问纯读库）
+      const isAShare = (m: string) => m === 'sh' || m === 'sz' || m === 'bj';
+      const aItems = parsed.filter((p) => isAShare(p.market));
+      if (aItems.length > 0) {
+        const aFullCodes = aItems.map((p) => toFullCode(p.code, p.market));
+        const [tradeMap, dictRows] = await Promise.all([
+          getTradesByDate(aFullCodes),
+          prisma.stockDict.findMany({
+            where: { code: { in: aFullCodes } },
+            select: { code: true, name: true, marketCap: true, floatMarketCap: true, financials: true },
+          }),
+        ]);
+        const dictMap = new Map(dictRows.map((d) => [d.code, d]));
+        const missing: { code: string; market: string; fullCode: string }[] = [];
+        aItems.forEach((p, i) => {
+          const fc = aFullCodes[i]!;
+          const row = tradeMap.get(fc);
+          if (row && row.current != null) {
+            snaps.set(p.code, fromDb(row, dictMap.get(fc)));
+          } else {
+            missing.push({ ...p, fullCode: fc });
+          }
+        });
+
+        // 缺失的穿透到东财 ulist（一次批量调用），写 stock_trade 当日行 + 更新字典市值/PE/PB
+        if (missing.length > 0) {
+          try {
+            const emSnaps = await fetchEastMoneySnaps(missing);
+            const marketByBare = new Map(missing.map((m) => [m.code, m]));
+            const rows = [...emSnaps.entries()].flatMap(([bare, s]) => {
+              const m = marketByBare.get(bare);
+              return m
+                ? [{
+                    stockCode: m.fullCode,
+                    open: s.open,
+                    current: s.last,
+                    prevClose: s.preclose,
+                    high: s.high,
+                    low: s.low,
+                    changePct: s.preclose > 0 ? ((s.last - s.preclose) / s.preclose) * 100 : null,
+                    volume: s.volume / 100, // 东财路径 volume 已 ×100 成股，转手
+                    amount: s.amount,
+                    turnover: s.turnoverRatio || null,
+                  }]
+                : [];
+            });
+            await replaceSnapshots(rows);
+            await Promise.all(
+              [...emSnaps.entries()].map(([bare, s]) => {
+                const m = marketByBare.get(bare);
+                if (!m) return null;
+                const old = dictMap.get(m.fullCode);
+                const oldFin = (old?.financials ?? {}) as Record<string, unknown>;
+                return prisma.stockDict
+                  .update({
+                    where: { code: m.fullCode },
+                    data: {
+                      marketCap: s.marketValue || null,
+                      floatMarketCap: s.circulationValue || null,
+                      financials: { ...oldFin, pe: s.pe, pb: s.pb },
+                    },
+                  })
+                  .catch(() => {}); // 字典行缺失等情况不阻塞行情返回
+              }),
+            );
+            for (const [code, snap] of emSnaps) snaps.set(code, snap);
+          } catch (e) {
+            console.warn('[stocks/real] eastmoney penetrate failed, fallback realtime:', e);
+          }
+        }
+      }
+
+      // 港股/美股 + 穿透失败的代码：港股走东财 ulist 直取，其余走 lib/realtime 三源降级
+      const nonAItems = parsed.filter((p) => !isAShare(p.market));
+      const hkItems = nonAItems.filter((p) => p.market !== 'us');
+      if (hkItems.length > 0) {
         try {
-          for (const [code, snap] of await fetchEastMoneySnaps(emItems)) snaps.set(code, snap);
+          for (const [code, snap] of await fetchEastMoneySnaps(hkItems)) snaps.set(code, snap);
         } catch (e) {
           console.warn('[stocks/real] eastmoney snapshot failed, fallback realtime:', e);
         }
       }
-      // 美股 + 东财失败的代码 → lib/realtime 三源降级
       const missing = parsed.filter((p) => !snaps.has(p.code));
       if (missing.length > 0) {
         try {
@@ -223,20 +335,19 @@ export const GET = async (req: NextRequest) => {
       return new NextResponse(body, { headers: { 'Content-Type': 'application/json' } });
     }
 
-    // —— 指数卡片（stock 表清单 + 三源降级） ——
-    const stocks = await getStocks();
-    const quotes = await fetchRealtimeQuotes(
-      stocks.map((s) => s.code),
-      stocks.map((s) => (s.source === 'SS' ? 'sh' : 'sz')),
-    );
+    // —— 指数卡片（stock_dict 指数清单 + 三源降级） ——
+    const indices = await getIndexDicts();
+    const bareCodes = indices.map((d) => parseDictCode(d.code).code);
+    const marketHints = indices.map((d) => parseDictCode(d.code).market.toLowerCase());
+    const quotes = await fetchRealtimeQuotes(bareCodes, marketHints);
     const byCode = new Map(quotes.map((q) => [q.code, q]));
 
     const snapshot: Record<string, Array<string | number>> = {};
-    for (const s of stocks) {
-      const q = byCode.get(s.code);
+    for (let i = 0; i < indices.length; i++) {
+      const q = byCode.get(bareCodes[i]!);
       if (!q) continue;
-      const fullCode = `${s.code}.${s.source}`;
-      snapshot[fullCode] = useFields.map((f) => fieldValue(fullCode, s.code, fromRealtime(q), f));
+      const fullCode = toExternalCode(indices[i]!.code); // wallstcn 后缀风格，如 000001.SS
+      snapshot[fullCode] = useFields.map((f) => fieldValue(fullCode, bareCodes[i]!, fromRealtime(q), f));
     }
 
     return NextResponse.json({ code: 200, data: { fields: useFields, snapshot }, message: '请求成功' });

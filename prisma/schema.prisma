@@ -51,60 +51,90 @@ model Invitation {
   @@map("invitations")
 }
 
-enum StockSource {
-  SS
-  SZ
+// 股票字典（全系统主线：A股/港股/指数/ETF；code 为带市场前缀的 fullCode，如 SH600519/HK00700）
+model StockDict {
+  code              String       @id @db.VarChar(20) // fullCode：SH600519/SZ000001/BJ430047/HK00700
+  market            String       @db.VarChar(10) // SH/SZ/BJ/HK
+  name              String       @db.VarChar(100)
+  formerNames       String?      @map("former_names") // 曾用名，逗号分隔
+  type              String       @default("stock") @db.VarChar(10) // stock/index/etf
+  marketCap         Float?       @map("market_cap") // 总市值（元）
+  floatMarketCap    Float?       @map("float_market_cap") // 流通市值（元）
+  mainBusiness      Json?        @map("main_business") // 主营业务
+  profitComposition Json?        @map("profit_composition") // 盈利构成
+  financials        Json? // 常用财务指标快照（PE/PB/ROE 等）
+  listedDate        DateTime?    @map("listed_date") @db.Date
+  isActive          Boolean      @default(true) @map("is_active") // 退市置 false
+  fundamentalsAt    DateTime?    @map("fundamentals_at") // 基本面最近回填时间（慢速回填调度依据）
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamp(0)
+  trades            StockTrade[]
+  newsStocks        NewsStock[]
+  plateStocks       PlateStock[]
+  watchlists        Watchlist[]
+  positions         Position[]
+  signals           StockSignal[]
+
+  @@map("stock_dict")
 }
 
-enum StockType {
-  ZS
-  AG
+// 股票交易（每股每日一条；盘中由 sync-snapshot 更新当日行，收盘后 sync-daily 覆盖）
+model StockTrade {
+  id        Int       @id @default(autoincrement())
+  stockCode String    @map("stock_code") @db.VarChar(20)
+  date      DateTime  @db.Date
+  open      Float? // 今开
+  current   Float? // 现价；收盘后=收盘价
+  prevOpen  Float?    @map("prev_open") // 昨日开盘
+  prevClose Float?    @map("prev_close") // 昨日收盘
+  high      Float? // 最高
+  low       Float? // 最低
+  changePct Float?    @map("change_pct") // 涨跌幅（%）
+  amplitude Float? // 振幅 = (high-low)/prevClose*100
+  volume    Float? // 成交量（手，沿用东财约定）
+  amount    Float? // 成交额（元）
+  turnover  Float? // 换手率（腾讯兜底源为 null）
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+  stock     StockDict @relation(fields: [stockCode], references: [code])
+
+  @@unique([stockCode, date])
+  @@index([date])
+  @@map("stock_trade")
 }
 
-// 指数/股票清单（行情总览页用）
-model Stock {
-  id     Int         @id @default(autoincrement())
-  code   String      @unique @db.VarChar(50)
-  source StockSource
-  type   StockType
-}
-
-// 自选股/持仓（按用户隔离：每人一个独立股票池）
+// 自选股/持仓（按用户隔离：每人一个独立股票池；名称/市场/类型从 stock_dict 关联获得）
 model Watchlist {
-  id         Int      @id @default(autoincrement())
-  userId     String   @map("user_id")
-  code       String   @db.VarChar(20)
-  name       String   @db.VarChar(100)
-  market     String   @db.VarChar(10)
-  type       String   @default("individual") @db.VarChar(20)
-  cost       Decimal  @default(0) @db.Decimal(10, 4)
-  markPrice  Decimal? @map("mark_price") @db.Decimal(10, 4) // 关注时价格（算「关注后涨跌幅」用，存量为 null 时懒回填）
-  alertsJson String   @map("alerts_json")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         Int       @id @default(autoincrement())
+  userId     String    @map("user_id")
+  stockCode  String    @map("stock_code") @db.VarChar(20) // fullCode，关联 stock_dict
+  cost       Decimal   @default(0) @db.Decimal(10, 4)
+  markPrice  Decimal?  @map("mark_price") @db.Decimal(10, 4) // 关注时价格（算「关注后涨跌幅」用，存量为 null 时懒回填）
+  alertsJson String    @map("alerts_json")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stock      StockDict @relation(fields: [stockCode], references: [code])
 
-  @@unique([userId, code])
+  @@unique([userId, stockCode])
   @@map("watchlist")
 }
 
 // 持仓记录（按用户隔离；同一股票允许多条买入价/数量不同的持仓记录）
 model Position {
-  id        Int      @id @default(autoincrement())
-  userId    String   @map("user_id")
-  code      String   @db.VarChar(20)
-  name      String   @db.VarChar(100)
-  market    String   @db.VarChar(10)
-  price     Decimal  @db.Decimal(10, 4) // 买入价
+  id        Int       @id @default(autoincrement())
+  userId    String    @map("user_id")
+  stockCode String    @map("stock_code") @db.VarChar(20) // fullCode，关联 stock_dict
+  price     Decimal   @db.Decimal(10, 4) // 买入价
   quantity  Int // 买入数量（股）
-  status    String   @default("holding") @db.VarChar(10) // holding 持仓中 / sold 已卖出
-  sellPrice Decimal? @map("sell_price") @db.Decimal(10, 4) // 卖出价（sold 时必填）
+  status    String    @default("holding") @db.VarChar(10) // holding 持仓中 / sold 已卖出
+  sellPrice Decimal?  @map("sell_price") @db.Decimal(10, 4) // 卖出价（sold 时必填）
   soldAt    DateTime? @map("sold_at") @db.Timestamp(0) // 卖出时间
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stock     StockDict @relation(fields: [stockCode], references: [code])
 
-  @@index([userId, code])
+  @@index([userId, stockCode])
   @@index([userId, status])
   @@map("position")
 }
@@ -139,65 +169,70 @@ model AlertHistory {
   @@map("alert_history")
 }
 
-// A股股票清单（每日同步自东方财富）
-model StockBasic {
-  id         Int       @id @default(autoincrement())
-  code       String    @unique @db.VarChar(10)
-  name       String    @db.VarChar(50)
-  market     String    @db.VarChar(10) // sh/sz/bj
-  listedDate DateTime? @map("listed_date")
-  isActive   Boolean   @default(true) @map("is_active") // 退市置 false
-  updatedAt  DateTime  @updatedAt @map("updated_at")
-
-  @@map("stock_basic")
-}
-
-// A股日线行情（每日收盘后同步）
-model StockDaily {
-  id        Int      @id @default(autoincrement())
-  code      String   @db.VarChar(10)
-  date      DateTime @db.Date
-  open      Float
-  close     Float
-  high      Float
-  low       Float
-  volume    Float
-  amount    Float
-  changePct Float    @map("change_pct")
-  turnover  Float? // 换手率（筹码分布计算需要）
-
-  @@unique([code, date])
-  @@index([date])
-  @@map("stock_daily")
-}
-
 // 分析信号（底部放量/顶部放量等）
 model StockSignal {
-  id     Int      @id @default(autoincrement())
-  code   String   @db.VarChar(10)
-  date   DateTime @db.Date
-  type   String   @db.VarChar(30) // bottom_volume / top_volume
-  detail String? // JSON：量比、位置分位等
+  id        Int       @id @default(autoincrement())
+  stockCode String    @map("stock_code") @db.VarChar(20) // fullCode，关联 stock_dict
+  date      DateTime  @db.Date
+  type      String    @db.VarChar(30) // bottom_volume / top_volume
+  detail    String? // JSON：量比、位置分位等
+  stock     StockDict @relation(fields: [stockCode], references: [code])
 
-  @@unique([code, date, type])
+  @@unique([stockCode, date, type])
   @@index([date, type])
   @@map("stock_signal")
 }
 
-// 资讯快讯（定时抓取落库，codes 为关联到的股票代码，keywords 为命中的关键词）
+// 资讯快讯（定时抓取落库；关联的股票走 news_stock 关联表，可多对多）
 model NewsFlash {
-  id          Int      @id @default(autoincrement())
-  source      String   @db.VarChar(20) // wallstcn / xuangubao
-  externalId  String   @map("external_id") @db.VarChar(50)
-  title       String?  @db.VarChar(500)
+  id          Int         @id @default(autoincrement())
+  source      String      @db.VarChar(20) // wallstcn / xuangubao
+  externalId  String      @map("external_id") @db.VarChar(50)
+  title       String?     @db.VarChar(500)
   content     String
-  codes       String? // 匹配到的股票代码，逗号分隔
-  keywords    String? @db.VarChar(500) // 命中的股票名/代码关键词，逗号分隔（相关度判定留痕）
-  publishedAt DateTime @map("published_at")
+  publishedAt DateTime    @map("published_at")
+  newsStocks  NewsStock[]
 
   @@unique([source, externalId])
   @@index([publishedAt])
   @@map("news_flash")
+}
+
+// 资讯-股票关联（多对多；keyword 为命中词留痕）
+model NewsStock {
+  id        Int       @id @default(autoincrement())
+  newsId    Int       @map("news_id")
+  stockCode String    @map("stock_code") @db.VarChar(20)
+  keyword   String?   @db.VarChar(100)
+  news      NewsFlash @relation(fields: [newsId], references: [id], onDelete: Cascade)
+  stock     StockDict @relation(fields: [stockCode], references: [code])
+
+  @@unique([newsId, stockCode])
+  @@index([stockCode])
+  @@map("news_stock")
+}
+
+// 板块（行业/题材；code = 源前缀:原始id，如 xgb:886001、qq:pt0124）
+model Plate {
+  code      String       @id @db.VarChar(40)
+  name      String       @db.VarChar(100)
+  kind      String       @db.VarChar(10) // industry / concept
+  source    String       @db.VarChar(10) // xgb / qq
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamp(0)
+  stocks    PlateStock[]
+
+  @@map("plate")
+}
+
+// 板块成分股（关联 stock_dict，点开板块看成分股用）
+model PlateStock {
+  plateCode String    @map("plate_code") @db.VarChar(40)
+  stockCode String    @map("stock_code") @db.VarChar(20)
+  plate     Plate     @relation(fields: [plateCode], references: [code], onDelete: Cascade)
+  stock     StockDict @relation(fields: [stockCode], references: [code])
+
+  @@id([plateCode, stockCode])
+  @@map("plate_stock")
 }
 
 // 资讯数据源配置（key 标识解析器；调度走全局 sync-news 任务轮询启用源）

@@ -2,10 +2,27 @@ import { NextResponse } from 'next/server';
 import { requireUser, UnauthorizedError } from '@/lib/session';
 import { requireRouteAccess } from '@/lib/route-perm';
 import { resolveStock } from '@/lib/stock-resolver';
+import { ensureStockDict } from '@/model/StockDict';
+import { parseFullCode } from '@/lib/stock-code';
 import prisma from '@/lib/prisma';
 
 // 股票代码格式（会被拼进外部行情 URL，必须严格校验）
 const CODE_PATTERN = /^[0-9A-Za-z.]{1,12}$/;
+
+// 展开字典关联为旧契约字段：code（6 位裸码）/ name / market（小写）；Decimal 转 number 方便前端直接计算
+const toLegacyPosition = <T extends { stockCode: string; price: unknown; sellPrice: unknown; stock: { name: string; market: string } }>(
+  p: T
+) => {
+  const { stock, ...row } = p;
+  return {
+    ...row,
+    code: parseFullCode(row.stockCode).code,
+    name: stock.name,
+    market: stock.market.toLowerCase(),
+    price: Number(row.price),
+    sellPrice: row.sellPrice === null ? null : Number(row.sellPrice)
+  };
+};
 
 // GET /api/positions - 获取当前用户的持仓记录（按账号隔离，同一股票可多条）
 export async function GET() {
@@ -28,17 +45,11 @@ export async function GET() {
 
     const positions = await prisma.position.findMany({
       where: { userId: session.uid },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
+      include: { stock: true }
     });
 
-    // Decimal 序列化为字符串，统一转成 number 方便前端直接计算
-    const data = positions.map(p => ({
-      ...p,
-      price: Number(p.price),
-      sellPrice: p.sellPrice === null ? null : Number(p.sellPrice)
-    }));
-
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true, data: positions.map(toLegacyPosition) });
 
   } catch (error) {
     console.error('Get positions error:', error);
@@ -100,7 +111,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 自动解析名称/市场（stock_basic 优先，实时行情兜底）
+    // 自动解析 fullCode/名称/市场（stock_dict 优先，实时行情兜底）
     const resolved = await resolveStock(code);
     if (!resolved) {
       return NextResponse.json(
@@ -109,6 +120,14 @@ export async function POST(request: Request) {
       );
     }
 
+    // 字典懒建行（position 的外键依赖字典行）
+    await ensureStockDict({
+      code: resolved.stockCode,
+      name: resolved.name,
+      market: resolved.market,
+      type: resolved.type === 'individual' ? 'stock' : resolved.type
+    });
+
     const agentId = session.username || 'web-ui';
 
     // 写操作与审计日志包在同一事务中
@@ -116,18 +135,17 @@ export async function POST(request: Request) {
       prisma.position.create({
         data: {
           userId: session.uid,
-          code,
-          name: resolved.name,
-          market: resolved.market,
+          stockCode: resolved.stockCode,
           price: priceNum,
           quantity: quantityNum
-        }
+        },
+        include: { stock: true }
       }),
       prisma.auditLog.create({
         data: {
           action: 'CREATE',
-          code,
-          details: `Created position: ${resolved.name} (${code}) ${quantityNum}股 @ ${priceNum}`,
+          code: resolved.stockCode,
+          details: `Created position: ${resolved.name} (${resolved.stockCode}) ${quantityNum}股 @ ${priceNum}`,
           agentId
         }
       })
@@ -135,7 +153,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      data: { ...position, price: Number(position.price) }
+      data: toLegacyPosition(position)
     });
 
   } catch (error) {
